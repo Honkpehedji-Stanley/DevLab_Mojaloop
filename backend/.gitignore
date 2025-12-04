@@ -1,31 +1,65 @@
-# Do not commit secrets
+# Secrets et données sensibles
 /secrets/
+.env
+.env.local
+.env.production
 
 # Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.coverage
+.pytest_cache/
 
-# Virtualenv
+# Environnements virtuels
 venv/
 .venv/
+env/
+ENV/
 
-# SQLite
+# Base de données
 *.sqlite3
 db.sqlite3
+*.db
 
 # Django
 /staticfiles/
 /media/
+/static/
+*.log
+local_settings.py
 
-# IDEs and editors
+# IDEs et éditeurs
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
 
-# OS files
+# OS
 .DS_Store
+Thumbs.db
+*.bak
 
-# Logs
-*.log
+# Docker
+.dockerignore
 
-# Environment
-.env
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Tests
+.tox/
+.coverage
+htmlcov/
+*.cover

@@ -1,2 +1,0 @@
-{"error": "invalid amount for row {'t-000001': 't-000002', '20000': '1000', 'XOF': 'XOF', 'PERSONAL_ID': 'PERSONAL_ID', '8884191054': '0231397586'}"}
-HTTP_STATUS:400

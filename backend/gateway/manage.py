@@ -1,9 +1,5 @@
 #!/usr/bin/env python
-"""Django's command-line utility for administrative tasks.
-
-This file was added to provide a working manage.py so that
-`python manage.py migrate` and other management commands work.
-"""
+"""Utilitaire de gestion Django."""
 import os
 import sys
 
@@ -14,9 +10,8 @@ def main():
         from django.core.management import execute_from_command_line
     except ImportError as exc:
         raise ImportError(
-            "Couldn't import Django. Are you sure it's installed and "
-            "available on your PYTHONPATH environment variable? Did you "
-            "forget to activate a virtual environment?"
+            "Django n'est pas installé. Vérifiez votre installation "
+            "et votre environnement virtuel."
         ) from exc
     execute_from_command_line(sys.argv)
 

@@ -1,13 +1,12 @@
 """
-Base settings skeleton for the Django gateway.
-Fill with real values when initializing the real project.
+Configuration de base pour la gateway Django Mojaloop.
 """
 from pathlib import Path
 import os
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'replace-me')
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'dev-only-insecure-key-change-in-production')
 
 DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'
 
@@ -20,7 +19,6 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    # apps
     'rest_framework',
     'drf_yasg',
     'apps.api',
@@ -40,7 +38,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = 'gateway.urls'
 
-# Minimal templates config required for admin and template rendering
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -57,6 +54,7 @@ TEMPLATES = [
     },
 ]
 
+# Configuration base de données: SQLite (dev) ou PostgreSQL (prod)
 if os.environ.get('USE_SQLITE', 'True') == 'True':
     DATABASES = {
         'default': {
@@ -70,7 +68,7 @@ else:
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': os.environ.get('POSTGRES_DB', 'gateway'),
             'USER': os.environ.get('POSTGRES_USER', 'gateway'),
-            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'password'),
+            'PASSWORD': os.environ.get('POSTGRES_PASSWORD', ''),
             'HOST': os.environ.get('POSTGRES_HOST', 'db'),
             'PORT': os.environ.get('POSTGRES_PORT', '5432'),
         }
@@ -78,12 +76,10 @@ else:
 
 STATIC_URL = '/static/'
 
-# URL of the local SDK Scheme Adapter service used in docker-compose for integration tests
-# Default points to the `mojaloop-connector-load-test` service inside the compose network.
+# URL du SDK Scheme Adapter Mojaloop (outbound API)
 SCHEME_ADAPTER_URL = os.environ.get('SCHEME_ADAPTER_URL', 'http://mojaloop-connector-load-test:4001')
 
-# Celery configuration
-# Use Redis as the broker and result backend (Redis service in docker-compose)
+# Configuration Celery avec Redis comme broker
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']
@@ -91,7 +87,7 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 
-# REST Framework settings
+# Configuration REST Framework: pas d'authentification requise (dev/test)
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',

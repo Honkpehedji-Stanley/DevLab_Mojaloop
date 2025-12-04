@@ -15,9 +15,7 @@ services:
       - mojaloop-itk-net
     env_file: ./mojaloop-connector-load-test.env
     environment:
-      POSTGRES_DB: gateway
-      POSTGRES_USER: gateway
-      POSTGRES_PASSWORD: gateway
+      USE_SQLITE: "True"
       SCHEME_ADAPTER_URL: "http://mojaloop-connector-load-test:4001"
       PYTHONPATH: "/app/gateway"
       DJANGO_SETTINGS_MODULE: "gateway.settings.dev"
@@ -28,10 +26,9 @@ services:
       - ./secrets:/app/secrets:ro
       - ./scripts:/app/scripts:ro
     depends_on:
-      - db
       - redis
       - mojaloop-connector-load-test
-    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && cd /app/gateway && python manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
+    command: ["sh", "-c", "cd /app/gateway && python manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
 
   # Celery worker for async tasks
   celery:
@@ -41,9 +38,7 @@ services:
       - mojaloop-itk-net
     env_file: ./mojaloop-connector-load-test.env
     environment:
-      POSTGRES_DB: gateway
-      POSTGRES_USER: gateway
-      POSTGRES_PASSWORD: gateway
+      USE_SQLITE: "True"
       SCHEME_ADAPTER_URL: "http://mojaloop-connector-load-test:4001"
       PYTHONPATH: "/app/gateway"
       DJANGO_SETTINGS_MODULE: "gateway.settings.dev"
@@ -53,22 +48,7 @@ services:
       - ./scripts:/app/scripts:ro
     depends_on:
       - redis
-      - db
-    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && cd /app/gateway && celery -A gateway worker -l info"]
-
-  # Postgres for persistence
-  db:
-    image: postgres:15-alpine
-    networks:
-      - mojaloop-itk-net
-    environment:
-      POSTGRES_DB: gateway
-      POSTGRES_USER: gateway
-      POSTGRES_PASSWORD: gateway
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5433"
+    command: ["sh", "-c", "cd /app/gateway && celery -A gateway worker -l info"]
 
   # Redis (already present previously) - user for cached 
   redis:
@@ -163,8 +143,4 @@ services:
       - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - web
-
-volumes:
-  db_data:
-    name: backend_db_data
 

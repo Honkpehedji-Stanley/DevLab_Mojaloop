@@ -11,29 +11,23 @@ from django.shortcuts import get_object_or_404
 from .models import Account, BulkTransfer, IndividualTransfer
 import requests
 from django.conf import settings
-
-# DRF + drf-yasg imports for better swagger documentation
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from . import serializers as sers
 
-# In docker-compose the sdk scheme-adapter service is named `mojaloop-connector-load-test`
-# and exposes its outbound API on port 4001 (see `mojaloop-connector-load-test.env`).
-# Use the environment override when available, otherwise default to the compose service
-# host and outbound port so containers can resolve each other via Docker DNS.
 SCHEME_ADAPTER_URL = getattr(settings, 'SCHEME_ADAPTER_URL', 'http://mojaloop-connector-load-test:4001')
 
 
 def parse_csv_file(file_bytes):
-    # Expecting CSV with headers: transferId,amount,currency,partyIdType,partyIdentifier
+    """
+    Parse un fichier CSV et retourne une liste de dictionnaires.
+    Attend les colonnes: transferId, amount, currency, partyIdType, partyIdentifier
+    """
     f = io.StringIO(file_bytes.decode('utf-8'))
     reader = csv.DictReader(f)
-    rows = []
-    for r in reader:
-        rows.append(r)
-    return rows
+    return list(reader)
 
 
 @csrf_exempt
