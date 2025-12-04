@@ -1,5 +1,3 @@
-version: '3.7'
-
 networks:
   mojaloop-itk-net:
     name: mojaloop-itk-net
@@ -9,7 +7,9 @@ services:
 
   # Django gateway (web)
   web:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: gateway-web
     networks:
       - mojaloop-itk-net
@@ -26,13 +26,16 @@ services:
       - ./secrets:/app/secrets:ro
       - ./scripts:/app/scripts:ro
     depends_on:
-      - redis
-      - mojaloop-connector-load-test
-    command: ["sh", "-c", "cd /app/gateway && python manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
+      redis:
+        condition: service_healthy
+    command: ["sh", "/app/scripts/entrypoint.sh", "gunicorn", "gateway.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--reload"]
+    restart: unless-stopped
 
   # Celery worker for async tasks
   celery:
-    build: .
+    build: 
+      context: .
+      dockerfile: Dockerfile
     container_name: gateway-celery
     networks:
       - mojaloop-itk-net
@@ -47,22 +50,28 @@ services:
       - ./secrets:/app/secrets:ro
       - ./scripts:/app/scripts:ro
     depends_on:
-      - redis
-    command: ["sh", "-c", "cd /app/gateway && celery -A gateway worker -l info"]
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    command: ["sh", "-c", "cd /app/gateway && celery -A gateway worker -l info --concurrency=2"]
+    restart: unless-stopped
 
   # Redis (already present previously) - user for cached 
   redis:
     networks:
       - mojaloop-itk-net
-    image: "redis:6.2.4-alpine"
+    image: "redis:7-alpine"
     ports:
       - "6379:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
     healthcheck:
-      test: [ "CMD", "sh", "-c", "redis-cli ping" ]
-      timeout: 20s
-      retries: 10
-      start_period: 40s
-      interval: 30s
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+      interval: 10s
+    restart: unless-stopped
 
   # SDK Mojaloop (existing)
   mojaloop-connector-load-test:

@@ -38,6 +38,8 @@ class User(AbstractUser):
         Organization, 
         on_delete=models.CASCADE,
         related_name='users',
+        null=True,
+        blank=True,
         help_text="Organisation à laquelle appartient l'utilisateur"
     )
     role = models.CharField(
@@ -61,10 +63,11 @@ class User(AbstractUser):
     class Meta:
         verbose_name = "Utilisateur"
         verbose_name_plural = "Utilisateurs"
-        ordering = ['organization', 'username']
+        ordering = ['username']
 
     def __str__(self):
-        return f"{self.username} ({self.get_role_display()}) - {self.organization.code}"
+        org_code = self.organization.code if self.organization else "N/A"
+        return f"{self.username} ({self.get_role_display()}) - {org_code}"
 
     def can_create_transfers(self):
         """Vérifie si l'utilisateur peut créer des transferts."""

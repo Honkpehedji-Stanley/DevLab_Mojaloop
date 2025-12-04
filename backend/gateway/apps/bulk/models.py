@@ -16,6 +16,8 @@ class Account(models.Model):
         'accounts.Organization',
         on_delete=models.CASCADE,
         related_name='accounts',
+        null=True,
+        blank=True,
         help_text="Organisation propriétaire du compte"
     )
 

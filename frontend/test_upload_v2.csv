@@ -1,6 +1,0 @@
-type_id,valeur_id,devise,montant,nom_complet
-NI,123456789,XOF,50000,Jean Dupont
-PASS,A1234567,USD,100.50,Alice Smith
-NI,,EUR,200,Invalid User
-,,XOF,1000,Missing IDs
-NI,987654321,XOF,,No Amount

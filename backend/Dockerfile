@@ -5,15 +5,17 @@ LABEL description="Django gateway pour transferts groupés Mojaloop"
 
 WORKDIR /app
 
-# Installer les dépendances système nécessaires
+# Installer les dépendances système (combiné pour réduire les layers)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copier et installer les requirements Python
+# Copier et installer les requirements Python (cache efficace)
 COPY gateway/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r /app/requirements.txt
 
 # Copier le code de l'application
@@ -33,9 +35,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app/gateway
 
-# Healthcheck pour vérifier que l'application est opérationnelle
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/api/bulk-transfers', timeout=5)" || exit 1
+# Healthcheck simplifié (sans requests pour économiser ressources)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=2 \
+    CMD curl -f http://localhost:8000/ || exit 1
 
 # Commande par défaut (surchargée dans docker-compose.yml)
-CMD ["gunicorn", "gateway.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--timeout", "120"]
+CMD ["gunicorn", "gateway.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "60", "--preload"]
