@@ -1,6 +1,6 @@
-# Gateway Django Mojaloop - Bulk Transfers
+# Gateway Django Mojaloop - Plateforme de Paiement de Pensions
 
-API REST Django pour la gestion de transferts groupés via le protocole Mojaloop. Cette gateway permet de créer et monitorer des bulk transfers en temps réel avec le SDK Scheme Adapter Mojaloop.
+API REST Django pour la gestion de transferts groupés de pensions via le protocole Mojaloop. Cette gateway permet aux organismes payeurs (CNSS, etc.) de créer et monitorer des paiements de pensions en masse en temps réel.
 
 ## Architecture
 
@@ -29,21 +29,38 @@ API REST Django pour la gestion de transferts groupés via le protocole Mojaloop
 
 ## Fonctionnalités
 
-### Endpoints Principaux
+### Authentification JWT
+
+La plateforme utilise l'authentification JWT (JSON Web Tokens) pour sécuriser l'accès.
+
+**Rôles utilisateurs:**
+- **GESTIONNAIRE**: Peut créer des bulk transfers de pensions
+- **SUPERVISEUR**: Consultation uniquement (lecture seule)
+
+**Endpoints d'authentification:**
+- `POST /api/auth/login` - Connexion (retourne access + refresh tokens)
+- `POST /api/auth/refresh` - Rafraîchir le token d'accès
+- `POST /api/auth/logout` - Déconnexion (blacklist le refresh token)
+- `GET /api/auth/me` - Profil utilisateur connecté
+
+### Endpoints Bulk Transfers (authentifiés)
 
 1. **POST /api/bulk-transfers**
    - Crée un bulk transfer à partir d'un fichier CSV
-   - Réserve les fonds sur le compte payeur
+   - Réserve les fonds sur le compte de l'organisation
    - Lance le traitement asynchrone via Celery
+   - **Permissions**: GESTIONNAIRE uniquement
 
 2. **GET /api/bulk-transfers/{id}/stream** (SSE)
    - Stream temps réel de la progression du bulk transfer
    - Mises à jour automatiques toutes les secondes
    - Fermeture automatique à la fin du traitement
+   - **Permissions**: Membres de la même organisation
 
 3. **GET /api/bulk-transfers/{id}/status**
    - Récupère l'état actuel du bulk transfer
    - Détails de tous les transferts individuels
+   - **Permissions**: Membres de la même organisation
 
 ### Formats CSV Supportés
 
@@ -82,22 +99,16 @@ cp .env.example .env
 nano .env
 
 # Démarrer tous les services
-docker compose up -d
+docker compose up -d --build
 
 # Vérifier que les services sont actifs
 docker compose ps
 
-# Créer un compte payeur de test
-docker exec -w /app/gateway gateway-web python manage.py shell -c "
-from apps.bulk.models import Account
-Account.objects.create(
-    party_id_type='MSISDN',
-    party_identifier='123456789',
-    account_id='ACC-123456789',
-    balance=1000000000,
-    reserved=0
-)
-"
+# Appliquer les migrations
+docker exec -w /app/gateway gateway-web python manage.py migrate
+
+# Créer les données de test (organisation + utilisateurs + compte)
+bash scripts/init-auth-data.sh
 ```
 
 ### Accès aux services
@@ -110,19 +121,62 @@ Account.objects.create(
 
 ## Utilisation
 
+### Authentification
+
+Tous les endpoints nécessitent une authentification JWT. Obtenez d'abord un token :
+
+```bash
+# 1. Se connecter pour obtenir un token JWT
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "gestionnaire",
+    "password": "Pensions2025!"
+  }'
+
+# Réponse: 
+# {
+#   "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+#   "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+# }
+
+# 2. Utiliser le token dans les requêtes suivantes
+export TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# 3. Rafraîchir le token (valable 7 jours)
+curl -X POST http://localhost:8000/api/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }'
+
+# 4. Se déconnecter (blacklist le token)
+curl -X POST http://localhost:8000/api/auth/logout \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  }'
+```
+
 ### Workflow complet en 3 étapes
 
 ```bash
-# 1. Créer un bulk transfer
+# Prérequis: définir le token d'authentification
+export TOKEN="votre_access_token_jwt"
+
+# 1. Créer un bulk transfer (nécessite rôle GESTIONNAIRE)
 curl -X POST http://localhost:8000/api/bulk-transfers \
+  -H "Authorization: Bearer $TOKEN" \
   -F "file=@transfers.csv" \
-  -F "payer_account=ACC-123456789" \
   -F "callback_url=http://localhost:8000/api/transfers"
 
 # Réponse: {"bulkTransferId": "bulk-xxx", "state": "PENDING"}
+# Note: Le compte payer_account est automatiquement celui de l'organisation de l'utilisateur
 
-# 2. Monitorer en temps réel (SSE)
-curl -N http://localhost:8000/api/bulk-transfers/bulk-xxx/stream
+# 2. Monitorer en temps réel (SSE) - nécessite authentification
+curl -N http://localhost:8000/api/bulk-transfers/bulk-xxx/stream \
+  -H "Authorization: Bearer $TOKEN"
 
 # Stream de progression:
 # data: {"state": "PROCESSING", "completed": 10, "total": 90, "progress_percent": 11.11}
@@ -130,33 +184,117 @@ curl -N http://localhost:8000/api/bulk-transfers/bulk-xxx/stream
 # data: {"state": "COMPLETED", "completed": 90, "total": 90, "progress_percent": 100.0}
 
 # 3. Récupérer le statut final détaillé
-curl http://localhost:8000/api/bulk-transfers/bulk-xxx/status | jq
+curl http://localhost:8000/api/bulk-transfers/bulk-xxx/status \
+  -H "Authorization: Bearer $TOKEN" | jq
 ```
 
 ### Intégration Frontend (JavaScript)
 
 ```javascript
-// Étape 1: Créer le bulk transfer
+// Configuration globale de l'authentification
+let accessToken = null;
+let refreshToken = null;
+
+// Fonction de login
+async function login(username, password) {
+  const response = await fetch('http://localhost:8000/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  
+  const data = await response.json();
+  accessToken = data.access;
+  refreshToken = data.refresh;
+  
+  // Stocker dans localStorage pour persistance
+  localStorage.setItem('accessToken', accessToken);
+  localStorage.setItem('refreshToken', refreshToken);
+}
+
+// Fonction pour rafraîchir le token automatiquement
+async function refreshAccessToken() {
+  const response = await fetch('http://localhost:8000/api/auth/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh: refreshToken })
+  });
+  
+  const data = await response.json();
+  accessToken = data.access;
+  localStorage.setItem('accessToken', accessToken);
+}
+
+// Étape 1: Créer le bulk transfer avec authentification
 const formData = new FormData();
 formData.append('file', csvFile);
-formData.append('payer_account', 'ACC-123456789');
 formData.append('callback_url', 'http://localhost:8000/api/transfers');
 
 const response = await fetch('http://localhost:8000/api/bulk-transfers', {
   method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${accessToken}`
+  },
   body: formData
 });
+
+if (response.status === 401) {
+  // Token expiré, rafraîchir et réessayer
+  await refreshAccessToken();
+  // Relancer la requête avec nouveau token...
+}
+
 const { bulkTransferId } = await response.json();
 
-// Étape 2: Stream SSE pour updates en temps réel
-const eventSource = new EventSource(
-  `http://localhost:8000/api/bulk-transfers/${bulkTransferId}/stream`
+// Étape 2: Stream SSE pour updates en temps réel avec authentification
+// Note: EventSource ne supporte pas les headers personnalisés nativement
+// Utiliser une approche alternative avec fetch + ReadableStream ou un polyfill
+
+const streamResponse = await fetch(
+  `http://localhost:8000/api/bulk-transfers/${bulkTransferId}/stream`,
+  {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'text/event-stream'
+    }
+  }
 );
 
-eventSource.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log(`Progression: ${data.progress_percent}%`);
-  updateProgressBar(data.completed, data.total);
+const reader = streamResponse.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  
+  const chunk = decoder.decode(value);
+  const lines = chunk.split('\n');
+  
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const data = JSON.parse(line.substring(6));
+      console.log(`Progression: ${data.progress_percent}%`);
+      updateProgressBar(data.completed, data.total);
+      
+      if (data.state === 'COMPLETED' || data.state === 'FAILED') {
+        reader.cancel();
+        break;
+      }
+    }
+  }
+}
+
+// Étape 3: Récupérer le statut final
+const statusResponse = await fetch(
+  `http://localhost:8000/api/bulk-transfers/${bulkTransferId}/status`,
+  {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`
+    }
+  }
+);
+const statusData = await statusResponse.json();
+displayResults(statusData);
 };
 
 eventSource.addEventListener('done', (event) => {

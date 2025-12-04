@@ -11,11 +11,13 @@ from django.shortcuts import get_object_or_404
 from .models import Account, BulkTransfer, IndividualTransfer
 import requests
 from django.conf import settings
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from . import serializers as sers
+from apps.accounts.permissions import IsGestionnaire, IsSameOrganization
 
 SCHEME_ADAPTER_URL = getattr(settings, 'SCHEME_ADAPTER_URL', 'http://mojaloop-connector-load-test:4001')
 
@@ -78,12 +80,41 @@ def parse_csv_file(file_bytes):
 )
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated, IsGestionnaire])
 def create_bulk_transfers(request):
     if request.method != 'POST':
         return HttpResponse(status=405)
 
-    # Expect multipart form with file field 'file' and optional 'payer_account'
-    payer_account_id = request.POST.get('payer_account') or request.POST.get('from')
+    # Récupérer le compte de l'organisation de l'utilisateur
+    payer_account_id = request.POST.get('payer_account')
+    
+    # Si pas de payer_account fourni, utiliser le premier compte actif de l'organisation
+    if not payer_account_id:
+        payer_account = Account.objects.filter(
+            organization=request.user.organization,
+            organization__is_active=True
+        ).first()
+        if not payer_account:
+            return HttpResponseBadRequest(
+                json.dumps({'error': 'Aucun compte actif trouvé pour votre organisation'}),
+                content_type='application/json'
+            )
+    else:
+        payer_account = Account.objects.filter(account_id=payer_account_id).first()
+        if not payer_account:
+            return HttpResponseBadRequest(
+                json.dumps({'error': 'payer account not found'}),
+                content_type='application/json'
+            )
+        
+        # Vérifier que le compte appartient à l'organisation de l'utilisateur
+        if payer_account.organization != request.user.organization:
+            return HttpResponse(
+                json.dumps({'error': 'Accès interdit à ce compte'}),
+                status=403,
+                content_type='application/json'
+            )
+
     file = request.FILES.get('file')
     if not file:
         return HttpResponseBadRequest(json.dumps({'error': 'file is required'}), content_type='application/json')
@@ -137,13 +168,6 @@ def create_bulk_transfers(request):
             'partyIdType': r.get('partyIdType'),
             'partyIdentifier': r.get('partyIdentifier'),
         })
-
-    if not payer_account_id:
-        return HttpResponseBadRequest(json.dumps({'error': 'payer_account (form field) is required'}), content_type='application/json')
-
-    payer_account = Account.objects.filter(account_id=payer_account_id).first()
-    if not payer_account:
-        return HttpResponseBadRequest(json.dumps({'error': 'payer account not found'}), content_type='application/json')
 
     if payer_account.available() < total:
         return HttpResponseBadRequest(json.dumps({'error': 'insufficient funds'}), content_type='application/json')
@@ -525,15 +549,25 @@ def transfer_callback(request, transfer_id):
     """,
     responses={
         200: sers.BulkTransferCreateResponseSerializer,
+        403: 'Accès interdit',
         404: 'Bulk transfer not found'
     }
 )
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def bulk_status(request, bulk_id):
     """Return the bulk status and the list of individual transfer states."""
     bulk = BulkTransfer.objects.filter(bulk_id=bulk_id).first()
     if not bulk:
         return HttpResponse(status=404)
+    
+    # Vérifier que le bulk appartient à l'organisation de l'utilisateur
+    if bulk.payer_account.organization != request.user.organization:
+        return HttpResponse(
+            json.dumps({'error': 'Accès interdit'}),
+            status=403,
+            content_type='application/json'
+        )
 
     individuals = []
     for it in bulk.individuals.all():

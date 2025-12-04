@@ -3,12 +3,13 @@ Server-Sent Events (SSE) endpoint for real-time bulk transfer status updates.
 """
 import json
 import time
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from .models import BulkTransfer, IndividualTransfer
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 
 
 def event_stream(bulk_id):
@@ -125,14 +126,30 @@ def event_stream(bulk_id):
     """,
     responses={
         200: 'text/event-stream - SSE stream',
+        403: 'Accès interdit',
         404: 'Bulk transfer not found'
     }
 )
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def stream_bulk_status(request, bulk_id):
     """
     SSE endpoint for real-time bulk transfer status updates.
     """
+    # Vérifier que le bulk existe et appartient à l'organisation
+    try:
+        bulk = BulkTransfer.objects.select_related('payer_account__organization').get(bulk_id=bulk_id)
+        if bulk.payer_account.organization != request.user.organization:
+            return JsonResponse(
+                {'error': 'Accès interdit'},
+                status=403
+            )
+    except BulkTransfer.DoesNotExist:
+        return JsonResponse(
+            {'error': 'Bulk transfer introuvable'},
+            status=404
+        )
+    
     response = StreamingHttpResponse(
         event_stream(bulk_id),
         content_type='text/event-stream'

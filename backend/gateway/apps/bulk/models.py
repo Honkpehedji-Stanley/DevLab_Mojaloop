@@ -12,6 +12,12 @@ class Account(models.Model):
     account_id = models.CharField(max_length=64, unique=True)
     balance = models.BigIntegerField(default=0)  # en unités mineures (centimes)
     reserved = models.BigIntegerField(default=0)  # montant réservé pour transferts en cours
+    organization = models.ForeignKey(
+        'accounts.Organization',
+        on_delete=models.CASCADE,
+        related_name='accounts',
+        help_text="Organisation propriétaire du compte"
+    )
 
     def available(self):
         """Retourne le solde disponible après déduction des réservations."""
