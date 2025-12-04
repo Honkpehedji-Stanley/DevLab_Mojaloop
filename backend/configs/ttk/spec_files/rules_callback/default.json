@@ -1,0 +1,53 @@
+[
+    {
+        "ruleId": 1,
+        "description": "Parties lookup callback",
+        "priority": 1,
+        "apiVersion": {
+            "minorVersion": 0,
+            "majorVersion": 1,
+            "type": "fspiop",
+            "asynchronous": true
+        },
+        "conditions": {
+            "all": [
+                {
+                    "fact": "operationPath",
+                    "operator": "equal",
+                    "value": "/parties/{Type}/{ID}"
+                }
+            ]
+        },
+        "event": {
+            "method": "put",
+            "path": "/parties/{Type}/{ID}",
+            "params": {
+                "Type": "{$request.params.Type}",
+                "ID": "{$request.params.ID}"
+            },
+            "headers": {
+                "Content-Type": "application/vnd.interoperability.parties+json;version=1.0",
+                "Date": "{$function.generic.curDate}",
+                "FSPIOP-Source": "testingtoolkitdfsp",
+                "FSPIOP-Destination": "{$request.headers['fspiop-source']}"
+            },
+            "body": {
+                "party": {
+                    "partyIdInfo": {
+                        "partyIdType": "{$request.params.Type}",
+                        "partyIdentifier": "{$request.params.ID}",
+                        "fspId": "testingtoolkitdfsp"
+                    },
+                    "name": "Test User",
+                    "personalInfo": {
+                        "complexName": {
+                            "firstName": "Test",
+                            "lastName": "User"
+                        },
+                        "dateOfBirth": "1990-01-01"
+                    }
+                }
+            }
+        }
+    }
+]

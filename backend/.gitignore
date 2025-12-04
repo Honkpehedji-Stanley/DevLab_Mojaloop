@@ -1,0 +1,6 @@
+# Do not commit secrets
+/secrets/
+
+# Python
+__pycache__/
+*.pyc

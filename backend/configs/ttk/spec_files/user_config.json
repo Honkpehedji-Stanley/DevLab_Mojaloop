@@ -1,0 +1,30 @@
+{
+    "VERSION": 1,
+    "CALLBACK_ENDPOINT": "http://mojaloop-connector-load-test:4000",
+    "HUB_ONLY_MODE": true,
+    "SEND_CALLBACK_ENABLE": true,
+    "FSPID": "testingtoolkitdfsp",
+    "DEFAULT_USER_FSPID": "userdfsp",
+    "TRANSFERS_VALIDATION_WITH_PRE1VIOUS_QUOTES": false,
+    "TRANSFERS_VALIDATION_ILP_PACKET": false,
+    "TRANSFERS_VALIDATION_CONDITION": false,
+    "ILP_SECRET": "secret",
+    "VERSIONING_SUPPORT_ENABLE": true,
+    "VALIDATE_INBOUND_JWS": false,
+    "VALIDATE_INBOUND_PUT_PARTIES_JWS": false,
+    "JWS_SIGN": false,
+    "JWS_SIGN_PUT_PARTIES": false,
+    "CALLBACK_TIMEOUT": 10000,
+    "CALLBACK_RESOURCE_ENDPOINTS": {
+        "enabled": false,
+        "endpoints": []
+    },
+    "ENDPOINTS_DFSP_WISE": {
+        "dfsps": {
+            "itk-load-test-dfsp": {
+                "defaultEndpoint": "http://mojaloop-connector-load-test:4000",
+                "endpoints": []
+            }
+        }
+    }
+}
