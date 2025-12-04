@@ -20,9 +20,11 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    # apps
+    # third-party
+    'corsheaders',
     'rest_framework',
     'drf_yasg',
+    # apps
     'apps.api',
     'apps.transactions',
     'apps.sdk_adapter',
@@ -31,6 +33,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -98,3 +101,10 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [],
 }
+
+# CORS settings - allow frontend to make requests
+CORS_ALLOWED_ORIGINS = [
+    'http://localhost:5173',  # Vite default
+    'http://localhost:3000',  # Alternative dev server
+]
+CORS_ALLOW_CREDENTIALS = True

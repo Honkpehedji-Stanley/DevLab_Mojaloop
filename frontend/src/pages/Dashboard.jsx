@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 
 export default function Dashboard() {
     const [data, setData] = useState([]);
+    const [file, setFile] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -18,7 +19,61 @@ export default function Dashboard() {
     const [lastUpload, setLastUpload] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [validationResult, setValidationResult] = useState(null);
+    const [bulkStatus, setBulkStatus] = useState(null);
+    const [processingMessage, setProcessingMessage] = useState('');
     const itemsPerPage = 8;
+
+    const handleFileSubmit = async (file) => {
+        if (!file) return;
+
+        setIsLoading(true);
+        setError(null);
+        setBulkStatus(null);
+        setProcessingMessage('Upload du fichier CSV...');
+
+        try {
+            // Upload CSV and create bulk transfer
+            const result = await api.uploadCSV(file);
+
+            setProcessingMessage(`Transfert créé: ${result.bulkTransferId}. Traitement en cours...`);
+            setBulkStatus(result);
+
+            // Poll for status updates
+            const finalStatus = await api.pollBulkStatus(
+                result.bulkTransferId,
+                (status) => {
+                    setBulkStatus(status);
+                    const completed = status.individualTransfers?.filter(t => t.status === 'COMPLETED').length || 0;
+                    const total = status.individualTransfers?.length || 0;
+                    setProcessingMessage(`Traitement: ${completed}/${total} transferts complétés...`);
+
+                    // Update table data in real-time
+                    const mappedData = status.individualTransfers.map((transfer) => ({
+                        transactionId: transfer.transferId,
+                        type_id: transfer.payee_party_id_type,
+                        valeur_id: transfer.payee_party_identifier,
+                        nom_complet: transfer.payee_name || '-',
+                        montant: transfer.amount,
+                        devise: transfer.currency,
+                        status: transfer.status === 'COMPLETED' ? 'SUCCESS' : (transfer.status === 'PENDING' ? 'PENDING' : 'FAILED'),
+                        message: transfer.status === 'COMPLETED'
+                            ? 'Transfert complété avec succès'
+                            : (transfer.status === 'PENDING' ? 'En attente de traitement' : 'Transfert échoué'),
+                        completed_at: transfer.completed_at
+                    }));
+                    setData(mappedData);
+                }
+            );
+
+            setProcessingMessage('');
+        } catch (err) {
+            setError(err.message);
+            setProcessingMessage('');
+            console.error(err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const handleFileUpload = async (file) => {
         if (!file) return;
@@ -128,6 +183,10 @@ export default function Dashboard() {
                             {!validationResult ? (
                                 <>
                                     <FileUpload
+                                        sendFile={(file) => {
+                                            setFile(file);
+                                            console.log(file)
+                                        }}
                                         onFileSelect={handleFileUpload}
                                         isUploading={isLoading}
                                         error={error}
@@ -135,8 +194,14 @@ export default function Dashboard() {
                                     {isLoading && (
                                         <div className="mt-6 flex flex-col items-center justify-center text-center animate-fade-in">
                                             <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-2" />
-                                            <p className="text-sm font-medium text-secondary-900">Traitement du fichier...</p>
-                                            <p className="text-xs text-secondary-500">Veuillez patienter</p>
+                                            <p className="text-sm font-medium text-secondary-900">Traitement en cours...</p>
+                                            <p className="text-xs text-secondary-500 mt-1">{processingMessage}</p>
+                                            {bulkStatus && (
+                                                <div className="mt-3 text-xs text-secondary-600">
+                                                    <p>État: {bulkStatus.state}</p>
+                                                    <p>Transferts: {bulkStatus.individualTransfers?.length || 0}</p>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </>
@@ -175,7 +240,7 @@ export default function Dashboard() {
 
                                     <div className="flex flex-col gap-3">
                                         <Button
-                                            onClick={handleConfirm}
+                                            onClick={() => handleFileSubmit(file)}
                                             disabled={isLoading}
                                             className="w-full"
                                         >
@@ -194,7 +259,7 @@ export default function Dashboard() {
                                 </div>
                             )}
 
-                            {lastUpload && !isLoading && !validationResult && (
+                            {lastUpload && !isLoading && (
                                 <div className="mt-6 p-4 bg-secondary-50 rounded-lg border border-secondary-100 animate-fade-in">
                                     <h4 className="font-medium text-secondary-900 mb-2 flex items-center">
                                         <FileText className="w-4 h-4 mr-2 text-secondary-500" />
@@ -202,7 +267,11 @@ export default function Dashboard() {
                                     </h4>
                                     <div className="space-y-2 text-sm">
                                         <div className="flex justify-between">
-                                            <span className="text-secondary-500">Paiememts a faire:</span>
+                                            <span className="text-secondary-500">ID Bulk:</span>
+                                            <span className="font-mono text-xs">{lastUpload.bulkId}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-secondary-500">Paiements à faire:</span>
                                             <span className="font-medium">{lastUpload.count}</span>
                                         </div>
                                         <div className="flex justify-between">
@@ -210,8 +279,12 @@ export default function Dashboard() {
                                             <span className="font-medium text-green-600">{lastUpload.successCount}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span className="text-secondary-500">Paiements echoués:</span>
+                                            <span className="text-secondary-500">Paiements échoués:</span>
                                             <span className="font-medium text-red-600">{lastUpload.count - lastUpload.successCount}</span>
+                                        </div>
+                                        <div className="flex justify-between pt-2 border-t border-secondary-200">
+                                            <span className="text-secondary-500">Montant total:</span>
+                                            <span className="font-medium">{lastUpload.totalAmount} {lastUpload.currency}</span>
                                         </div>
                                     </div>
                                 </div>
