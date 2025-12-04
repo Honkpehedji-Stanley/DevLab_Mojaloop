@@ -77,3 +77,16 @@ else:
     }
 
 STATIC_URL = '/static/'
+
+# URL of the local SDK Scheme Adapter service used in docker-compose for integration tests
+# Default points to the `mojaloop-connector-load-test` service inside the compose network.
+SCHEME_ADAPTER_URL = os.environ.get('SCHEME_ADAPTER_URL', 'http://mojaloop-connector-load-test:4001')
+
+# Celery configuration
+# Use Redis as the broker and result backend (Redis service in docker-compose)
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://redis:6379/0')
+CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'

@@ -18,6 +18,9 @@ services:
       POSTGRES_DB: gateway
       POSTGRES_USER: gateway
       POSTGRES_PASSWORD: gateway
+      SCHEME_ADAPTER_URL: "http://mojaloop-connector-load-test:4001"
+      PYTHONPATH: "/app/gateway"
+      DJANGO_SETTINGS_MODULE: "gateway.settings.dev"
     ports:
       - "8000:8000"
     volumes:
@@ -28,7 +31,7 @@ services:
       - db
       - redis
       - mojaloop-connector-load-test
-    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && python gateway/manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
+    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && cd /app/gateway && python manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
 
   # Celery worker for async tasks
   celery:
@@ -41,6 +44,9 @@ services:
       POSTGRES_DB: gateway
       POSTGRES_USER: gateway
       POSTGRES_PASSWORD: gateway
+      SCHEME_ADAPTER_URL: "http://mojaloop-connector-load-test:4001"
+      PYTHONPATH: "/app/gateway"
+      DJANGO_SETTINGS_MODULE: "gateway.settings.dev"
     volumes:
       - ./gateway:/app/gateway:rw
       - ./secrets:/app/secrets:ro
@@ -48,7 +54,7 @@ services:
     depends_on:
       - redis
       - db
-    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && celery -A gateway worker -l info"]
+    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && cd /app/gateway && celery -A gateway worker -l info"]
 
   # Postgres for persistence
   db:
@@ -64,7 +70,7 @@ services:
     ports:
       - "5433:5433"
 
-  # Redis (already present previously) - used for cache and celery broker
+  # Redis (already present previously) - user for cached 
   redis:
     networks:
       - mojaloop-itk-net
@@ -84,6 +90,8 @@ services:
       - mojaloop-itk-net
     image: mojaloop/sdk-scheme-adapter:latest
     env_file: ./mojaloop-connector-load-test.env
+    environment:
+      BACKEND_ENDPOINT: "http://web:8000"
     ports:
       - "4041:4000"  
       - "4001:4001" 

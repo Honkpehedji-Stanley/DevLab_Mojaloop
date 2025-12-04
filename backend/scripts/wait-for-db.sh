@@ -3,6 +3,19 @@ set -e
 
 host="$1"
 shift
+
+# Brief sleep to ensure Docker DNS is ready
+sleep 2
+
+# Wait for DNS resolution first
+echo "Waiting for DNS resolution of $host..."
+while ! getent hosts "$host" > /dev/null 2>&1; do
+  echo "DNS not ready for $host, waiting..."
+  sleep 1
+done
+echo "DNS resolved $host"
+
+# Now wait for postgres to be ready
 while true; do
   python - <<PY
 import sys

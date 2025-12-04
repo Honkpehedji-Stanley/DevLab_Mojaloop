@@ -12,7 +12,18 @@ from .models import Account, BulkTransfer, IndividualTransfer
 import requests
 from django.conf import settings
 
-SCHEME_ADAPTER_URL = getattr(settings, 'SCHEME_ADAPTER_URL', 'http://scheme-adapter:4000')
+# DRF + drf-yasg imports for better swagger documentation
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import MultiPartParser, FormParser
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+from . import serializers as sers
+
+# In docker-compose the sdk scheme-adapter service is named `mojaloop-connector-load-test`
+# and exposes its outbound API on port 4001 (see `mojaloop-connector-load-test.env`).
+# Use the environment override when available, otherwise default to the compose service
+# host and outbound port so containers can resolve each other via Docker DNS.
+SCHEME_ADAPTER_URL = getattr(settings, 'SCHEME_ADAPTER_URL', 'http://mojaloop-connector-load-test:4001')
 
 
 def parse_csv_file(file_bytes):
@@ -26,6 +37,13 @@ def parse_csv_file(file_bytes):
 
 
 @csrf_exempt
+@swagger_auto_schema(
+    method='post',
+    request_body=sers.BulkTransferRequestFileSerializer,
+    responses={200: sers.BulkTransferCreateResponseSerializer}
+)
+@api_view(['POST'])
+@parser_classes([MultiPartParser, FormParser])
 def create_bulk_transfers(request):
     if request.method != 'POST':
         return HttpResponse(status=405)
@@ -37,10 +55,33 @@ def create_bulk_transfers(request):
         return HttpResponseBadRequest(json.dumps({'error': 'file is required'}), content_type='application/json')
 
     rows = parse_csv_file(file.read())
-    # validate rows
+
+    # If the uploaded CSV is in `payment_list` format (type_id,valeur_id,devise,montant,...)
+    # normalize it to the internal expected columns: transferId,amount,currency,partyIdType,partyIdentifier
+    if rows:
+        first_keys = {k.lower() for k in rows[0].keys()}
+        if 'type_id' in first_keys or 'valeur_id' in first_keys:
+            normalized = []
+            for r in rows:
+                # map fields, generate transferId since payment_list doesn't include it
+                try:
+                    amt = int(r.get('montant'))
+                except Exception:
+                    return HttpResponseBadRequest(json.dumps({'error': f"invalid montant for row {r}"}), content_type='application/json')
+                normalized.append({
+                    'transferId': str(uuid.uuid4()),
+                    'amount': amt,
+                    'currency': r.get('devise', 'XOF'),
+                    'partyIdType': r.get('type_id'),
+                    'partyIdentifier': r.get('valeur_id'),
+                })
+            rows = normalized
+
+    # validate rows and detect duplicate transferIds in the uploaded CSV
     individual_objs = []
     total = 0
     currency = None
+    seen_ids = set()
     for r in rows:
         try:
             amount = int(r.get('amount'))
@@ -48,9 +89,15 @@ def create_bulk_transfers(request):
             return HttpResponseBadRequest(json.dumps({'error': f"invalid amount for row {r}"}), content_type='application/json')
         if currency is None:
             currency = r.get('currency', 'XOF')
+
+        transfer_id = r.get('transferId') or str(uuid.uuid4())
+        if transfer_id in seen_ids:
+            return HttpResponseBadRequest(json.dumps({'error': f"duplicate transferId in csv: {transfer_id}"}), content_type='application/json')
+        seen_ids.add(transfer_id)
+
         total += amount
         individual_objs.append({
-            'transferId': r.get('transferId') or str(uuid.uuid4()),
+            'transferId': transfer_id,
             'amount': amount,
             'currency': r.get('currency', 'XOF'),
             'partyIdType': r.get('partyIdType'),
@@ -74,6 +121,11 @@ def create_bulk_transfers(request):
         payer_account.reserved += total
         payer_account.save()
 
+        # ensure none of the provided transferIds already exist in DB (avoid UNIQUE constraint failures)
+        existing_ids = list(IndividualTransfer.objects.filter(transfer_id__in=list(seen_ids)).values_list('transfer_id', flat=True))
+        if existing_ids:
+            return HttpResponseBadRequest(json.dumps({'error': f"transferId(s) already exist: {existing_ids}"}), content_type='application/json')
+
         bulk = BulkTransfer.objects.create(bulk_id=bulk_id, payer_account=payer_account, total_amount=total, currency=currency)
         for it in individual_objs:
             IndividualTransfer.objects.create(
@@ -85,29 +137,37 @@ def create_bulk_transfers(request):
                 currency=it['currency'],
             )
 
-    # Forward to scheme adapter (best-effort, asynchronous in production)
+    # Enqueue orchestration task (Celery) to perform discovery/quotes/execution asynchronously
     try:
-        payload = {
-            'bulkTransferId': bulk.bulk_id,
-            'bulkQuoteId': f"quote-{uuid.uuid4().hex[:8]}",
-            'payerFsp': payer_account.account_id,
-            'individualTransfers': [
-                {
-                    'transferId': it.transfer_id,
-                    'transferAmount': {'amount': str(it.amount), 'currency': it.currency},
-                    'payee': {'partyIdInfo': {'partyIdType': it.payee_party_id_type, 'partyIdentifier': it.payee_party_identifier}}
-                } for it in bulk.individuals.all()
-            ]
-        }
-        requests.post(f"{SCHEME_ADAPTER_URL}/bulkTransfers", json=payload, timeout=5)
+        from .tasks import orchestrate_bulk
+        orchestrate_bulk.delay(bulk.bulk_id)
     except Exception:
-        # ignore forwarding errors for now
-        pass
+        # fallback: best-effort immediate forward (if Celery is not available)
+        try:
+            payload = {
+                'bulkTransferId': bulk.bulk_id,
+                'bulkQuoteId': f"quote-{uuid.uuid4().hex[:8]}",
+                'payerFsp': payer_account.account_id,
+                'individualTransfers': [
+                    {
+                        'transferId': it.transfer_id,
+                        'transferAmount': {'amount': str(it.amount), 'currency': it.currency},
+                        'payee': {'partyIdInfo': {'partyIdType': it.payee_party_id_type, 'partyIdentifier': it.payee_party_identifier}}
+                    } for it in bulk.individuals.all()
+                ]
+            }
+            requests.post(f"{SCHEME_ADAPTER_URL}/bulkTransfers", json=payload, timeout=5)
+            bulk.state = 'IN_PROGRESS'
+            bulk.save()
+        except Exception:
+            pass
 
     return JsonResponse({'bulkTransferId': bulk.bulk_id, 'state': bulk.state})
 
 
 @csrf_exempt
+@swagger_auto_schema(methods=['put', 'post'], request_body=sers.BulkCallbackRequestSerializer, responses={200: sers.BulkTransferCreateResponseSerializer})
+@api_view(['PUT', 'POST'])
 def bulk_callback(request, bulk_id):
     if request.method not in ('PUT', 'POST'):
         return HttpResponse(status=405)
@@ -162,6 +222,8 @@ def bulk_callback(request, bulk_id):
     return JsonResponse({'bulkTransferId': bulk.bulk_id, 'state': bulk.state})
 
 
+@swagger_auto_schema(method='get', responses={200: sers.PartyResponseSerializer})
+@api_view(['GET'])
 def get_party(request, party_type, party_id):
     # Return party info if account exists
     acc = Account.objects.filter(party_id_type=party_type, party_identifier=party_id).first()
@@ -177,7 +239,8 @@ def get_party(request, party_type, party_id):
     return JsonResponse(data)
 
 
-@csrf_exempt
+@swagger_auto_schema(method='post', request_body=sers.BulkQuoteRequestSerializer, responses={200: sers.BulkQuoteResponseSerializer})
+@api_view(['POST'])
 def post_quotes(request):
     # Expect JSON with bulkQuoteId and individualQuoteRequests
     if request.method != 'POST':
@@ -212,7 +275,8 @@ def post_quotes(request):
     return JsonResponse({'individualQuoteResults': results})
 
 
-@csrf_exempt
+@swagger_auto_schema(method='post', request_body=None, responses={200: sers.TransferResponseSerializer})
+@api_view(['POST'])
 def post_transfers(request):
     # Expect JSON with bulkTransferId and individualTransfers similar to schema adapter simplified format
     if request.method != 'POST':
@@ -275,3 +339,33 @@ def post_transfers(request):
             results.append({'transferId': transferId, 'fulfilment': fulfilment})
 
     return JsonResponse({'individualTransferResults': results})
+
+
+@swagger_auto_schema(method='get', responses={200: sers.BulkTransferCreateResponseSerializer})
+@api_view(['GET'])
+def bulk_status(request, bulk_id):
+    """Return the bulk status and the list of individual transfer states."""
+    bulk = BulkTransfer.objects.filter(bulk_id=bulk_id).first()
+    if not bulk:
+        return HttpResponse(status=404)
+
+    individuals = []
+    for it in bulk.individuals.all():
+        individuals.append({
+            'transferId': it.transfer_id,
+            'amount': it.amount,
+            'currency': it.currency,
+            'status': it.status,
+            'fulfilment': it.fulfilment,
+            'completed_at': it.completed_at.isoformat() if it.completed_at else None,
+        })
+
+    data = {
+        'bulkTransferId': bulk.bulk_id,
+        'state': bulk.state,
+        'total_amount': bulk.total_amount,
+        'currency': bulk.currency,
+        'payer_account': bulk.payer_account.account_id if bulk.payer_account else None,
+        'individualTransfers': individuals,
+    }
+    return JsonResponse(data)

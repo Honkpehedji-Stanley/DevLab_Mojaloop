@@ -4,3 +4,28 @@
 # Python
 __pycache__/
 *.pyc
+
+# Virtualenv
+venv/
+.venv/
+
+# SQLite
+*.sqlite3
+db.sqlite3
+
+# Django
+/staticfiles/
+/media/
+
+# IDEs and editors
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+
+# Environment
+.env
