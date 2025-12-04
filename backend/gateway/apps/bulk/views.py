@@ -39,8 +39,48 @@ def parse_csv_file(file_bytes):
 @csrf_exempt
 @swagger_auto_schema(
     method='post',
+    operation_description="""
+    Create a bulk transfer by uploading a CSV file containing individual transfers.
+    
+    **CSV Format Options:**
+    1. Standard format: `transferId,amount,currency,partyIdType,partyIdentifier`
+    2. Payment list format: `type_id,valeur_id,devise,montant` (transferId auto-generated)
+    
+    **Process:**
+    - Validates payer account and sufficient funds
+    - Reserves funds for the bulk transfer
+    - Creates individual transfer records
+    - Triggers async Celery orchestration via SDK scheme-adapter
+    - Returns immediately with bulk ID and PENDING state
+    
+    **Example:**
+    ```
+    transferId,amount,currency,partyIdType,partyIdentifier
+    transfer-001,10000,XOF,PERSONAL_ID,0612345678
+    transfer-002,5000,XOF,PERSONAL_ID,0698765432
+    ```
+    """,
     request_body=sers.BulkTransferRequestFileSerializer,
-    responses={200: sers.BulkTransferCreateResponseSerializer}
+    responses={
+        200: sers.BulkTransferCreateResponseSerializer,
+        400: 'Bad Request - Missing file, invalid CSV, insufficient funds, or duplicate transfer IDs'
+    },
+    manual_parameters=[
+        openapi.Parameter(
+            'payer_account',
+            openapi.IN_FORM,
+            description="Payer account ID (required)",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+        openapi.Parameter(
+            'file',
+            openapi.IN_FORM,
+            description="CSV file containing transfers",
+            type=openapi.TYPE_FILE,
+            required=True
+        )
+    ]
 )
 @api_view(['POST'])
 @parser_classes([MultiPartParser, FormParser])
@@ -341,7 +381,159 @@ def post_transfers(request):
     return JsonResponse({'individualTransferResults': results})
 
 
-@swagger_auto_schema(method='get', responses={200: sers.BulkTransferCreateResponseSerializer})
+@csrf_exempt
+@swagger_auto_schema(
+    methods=['put'],
+    operation_description="""
+    Callback endpoint for SDK scheme adapter to notify individual transfer completion.
+    
+    **Called by:** Mojaloop SDK scheme-adapter  
+    **When:** After receiving transfer fulfillment from the hub
+    
+    **Process:**
+    1. Validates transfer exists and is not already completed (idempotent)
+    2. Credits payee account with transfer amount
+    3. Debits payer reserved amount atomically
+    4. Marks transfer as COMPLETED
+    5. Auto-completes bulk if all transfers done
+    
+    **Note:** This is an internal callback endpoint used by the SDK adapter.
+    In production, this should be protected and only accessible from trusted sources.
+    """,
+    request_body=openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'currentState': openapi.Schema(type=openapi.TYPE_STRING, description='Transfer state (COMPLETED, FAILED, etc.)'),
+            'fulfilment': openapi.Schema(type=openapi.TYPE_STRING, description='ILP fulfilment proof'),
+        }
+    ),
+    responses={
+        200: openapi.Response(
+            description='Transfer callback processed successfully',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'transferId': openapi.Schema(type=openapi.TYPE_STRING),
+                    'status': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
+        400: 'Invalid request or transfer not found',
+        405: 'Method not allowed'
+    }
+)
+@api_view(['PUT'])
+def transfer_callback(request, transfer_id):
+    """
+    Callback endpoint for SDK scheme adapter to notify transfer completion.
+    The adapter calls this when it receives a transfer fulfillment from the hub.
+    """
+    if request.method != 'PUT':
+        return HttpResponse(status=405)
+
+    try:
+        data = json.loads(request.body.decode('utf-8'))
+    except Exception:
+        return HttpResponseBadRequest(json.dumps({'error': 'invalid json'}), content_type='application/json')
+
+    # Find the individual transfer
+    it = IndividualTransfer.objects.filter(transfer_id=transfer_id).first()
+    if not it:
+        return HttpResponseBadRequest(json.dumps({'error': 'transfer not found'}), content_type='application/json')
+
+    # Idempotent - if already completed, return success
+    if it.status == 'COMPLETED':
+        return JsonResponse({'transferId': transfer_id, 'status': 'COMPLETED'})
+
+    # Extract transfer state from callback
+    transfer_state = data.get('currentState') or data.get('transferState') or 'COMPLETED'
+    
+    if transfer_state == 'COMMITTED' or transfer_state == 'COMPLETED':
+        with transaction.atomic():
+            # Credit payee account
+            payee = Account.objects.filter(
+                party_id_type=it.payee_party_id_type,
+                party_identifier=it.payee_party_identifier
+            ).first()
+            
+            if not payee:
+                # Create payee account if it doesn't exist
+                payee = Account.objects.create(
+                    party_id_type=it.payee_party_id_type,
+                    party_identifier=it.payee_party_identifier,
+                    account_id=f"ACC-{uuid.uuid4().hex[:8]}",
+                    balance=0
+                )
+            
+            payee.balance += it.amount
+            payee.save()
+            it.payee_account = payee
+            
+            # Debit payer account (reduce reserved and balance)
+            if it.bulk and it.bulk.payer_account:
+                payer = it.bulk.payer_account
+                payer.reserved = max(0, payer.reserved - it.amount)
+                payer.balance = max(0, payer.balance - it.amount)
+                payer.save()
+            
+            # Mark transfer as completed
+            it.status = 'COMPLETED'
+            it.fulfilment = data.get('fulfilment') or base64.b64encode(f"fulfil:{transfer_id}".encode()).decode()
+            it.completed_at = datetime.utcnow()
+            it.save()
+            
+            # Check if all transfers in bulk are completed
+            if it.bulk:
+                all_completed = not it.bulk.individuals.filter(status='PENDING').exists()
+                if all_completed:
+                    it.bulk.state = 'COMPLETED'
+                    it.bulk.save()
+
+    return JsonResponse({'transferId': transfer_id, 'status': it.status})
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description="""
+    Get the status of a bulk transfer and all its individual transfers.
+    
+    **Response includes:**
+    - Bulk transfer state (PENDING, IN_PROGRESS, COMPLETED, FAILED)
+    - Total amount and currency
+    - Payer account ID
+    - Array of individual transfers with their status
+    
+    **Individual transfer states:**
+    - PENDING: Not yet processed
+    - COMPLETED: Successfully transferred
+    - FAILED: Transfer failed
+    
+    **Example response:**
+    ```json
+    {
+      "bulkTransferId": "bulk-abc123",
+      "state": "COMPLETED",
+      "total_amount": 15500,
+      "currency": "XOF",
+      "payer_account": "PAYER-001",
+      "individualTransfers": [
+        {
+          "transferId": "transfer-001",
+          "amount": 10000,
+          "currency": "XOF",
+          "status": "COMPLETED",
+          "fulfilment": "...",
+          "completed_at": "2025-12-04T14:30:00Z"
+        }
+      ]
+    }
+    ```
+    """,
+    responses={
+        200: sers.BulkTransferCreateResponseSerializer,
+        404: 'Bulk transfer not found'
+    }
+)
 @api_view(['GET'])
 def bulk_status(request, bulk_id):
     """Return the bulk status and the list of individual transfer states."""
