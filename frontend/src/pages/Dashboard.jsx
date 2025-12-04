@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/Table';
 import { FileUpload } from '../components/ui/FileUpload';
+import { Pagination } from '../components/ui/Pagination';
 import { api } from '../lib/api';
 import { cn } from '../lib/utils';
 
@@ -15,32 +16,61 @@ export default function Dashboard() {
     const [searchTerm, setSearchTerm] = useState('');
     const [statusFilter, setStatusFilter] = useState('ALL'); // ALL, SUCCESS, FAILED
     const [lastUpload, setLastUpload] = useState(null);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [validationResult, setValidationResult] = useState(null);
+    const itemsPerPage = 8;
 
     const handleFileUpload = async (file) => {
-        if (!file) {
-            setData([]);
-            setLastUpload(null);
-            return;
-        }
+        if (!file) return;
 
         setIsLoading(true);
         setError(null);
+        setValidationResult(null);
 
         try {
-            const response = await api.uploadPensions(file);
-            setData(response.data);
-            setLastUpload({
-                name: file.name,
-                count: response.data.length,
-                successCount: response.data.filter(d => d.status === 'SUCCESS').length,
-                timestamp: new Date()
-            });
+            const result = await api.validatePensions(file);
+            setValidationResult(result);
         } catch (err) {
             setError(err.message);
             console.error(err);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleConfirm = async () => {
+        if (!validationResult) return;
+
+        setIsLoading(true);
+        setError(null);
+
+        try {
+            const response = await api.confirmPensions(validationResult.uploadId);
+            setData(response);
+            setLastUpload({
+                count: response.length,
+                successCount: response.filter(d => d.status === 'SUCCESS').length,
+                timestamp: new Date()
+            });
+            setValidationResult(null);
+            setCurrentPage(1);
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleCancel = async () => {
+        if (!validationResult) return;
+
+        try {
+            await api.cancelPensions(validationResult.uploadId);
+        } catch (err) {
+            console.error(err);
+        }
+        setValidationResult(null);
+        setError(null);
     };
 
     const filteredData = data.filter(item => {
@@ -50,6 +80,11 @@ export default function Dashboard() {
         const matchesFilter = statusFilter === 'ALL' || item.status === statusFilter;
         return matchesSearch && matchesFilter;
     });
+
+    // Pagination Logic
+    const indexOfLastItem = currentPage * itemsPerPage;
+    const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+    const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
 
     const downloadReport = () => {
         if (data.length === 0) return;
@@ -90,21 +125,76 @@ export default function Dashboard() {
                             <CardTitle>Importer CSV</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            <FileUpload
-                                onFileSelect={handleFileUpload}
-                                isUploading={isLoading}
-                                error={error}
-                            />
+                            {!validationResult ? (
+                                <>
+                                    <FileUpload
+                                        onFileSelect={handleFileUpload}
+                                        isUploading={isLoading}
+                                        error={error}
+                                    />
+                                    {isLoading && (
+                                        <div className="mt-6 flex flex-col items-center justify-center text-center animate-fade-in">
+                                            <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-2" />
+                                            <p className="text-sm font-medium text-secondary-900">Traitement du fichier...</p>
+                                            <p className="text-xs text-secondary-500">Veuillez patienter</p>
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <div className="animate-fade-in space-y-6">
+                                    <div className="bg-secondary-50 p-4 rounded-lg border border-secondary-100">
+                                        <h3 className="font-medium text-secondary-900 mb-3">Résumé de la validation</h3>
+                                        <div className="space-y-2 text-sm">
+                                            <div className="flex justify-between">
+                                                <span className="text-secondary-500">Total lignes:</span>
+                                                <span className="font-medium">{validationResult.totalRows}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-secondary-500">Lignes valides:</span>
+                                                <span className="font-medium text-primary-600">{validationResult.validCount}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span className="text-secondary-500">Lignes invalides:</span>
+                                                <span className="font-medium text-red-600">{validationResult.invalidCount}</span>
+                                            </div>
+                                        </div>
+                                    </div>
 
-                            {isLoading && (
-                                <div className="mt-6 flex flex-col items-center justify-center text-center animate-fade-in">
-                                    <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-2" />
-                                    <p className="text-sm font-medium text-secondary-900">Traitement des transactions...</p>
-                                    <p className="text-xs text-secondary-500">Cela peut prendre quelques instants</p>
+                                    {validationResult.invalidCount > 0 && (
+                                        <div className="bg-red-50 p-4 rounded-lg border border-red-100">
+                                            <h4 className="font-medium text-red-800 mb-2 text-sm">Lignes ignorées ({validationResult.invalidCount})</h4>
+                                            <div className="max-h-32 overflow-y-auto text-xs text-red-600 space-y-1">
+                                                {validationResult.invalidRows.map((row, idx) => (
+                                                    <div key={idx}>
+                                                        Ligne {row.rowNumber}: {row.reason}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="flex flex-col gap-3">
+                                        <Button
+                                            onClick={handleConfirm}
+                                            disabled={isLoading}
+                                            className="w-full"
+                                        >
+                                            {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                                            Poursuivre le transfert
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            onClick={handleCancel}
+                                            disabled={isLoading}
+                                            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
+                                        >
+                                            Annuler
+                                        </Button>
+                                    </div>
                                 </div>
                             )}
 
-                            {lastUpload && !isLoading && (
+                            {lastUpload && !isLoading && !validationResult && (
                                 <div className="mt-6 p-4 bg-secondary-50 rounded-lg border border-secondary-100 animate-fade-in">
                                     <h4 className="font-medium text-secondary-900 mb-2 flex items-center">
                                         <FileText className="w-4 h-4 mr-2 text-secondary-500" />
@@ -117,7 +207,7 @@ export default function Dashboard() {
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-secondary-500">Paiements faits:</span>
-                                            <span className="font-medium text-primary-600">{lastUpload.successCount}</span>
+                                            <span className="font-medium text-green-600">{lastUpload.successCount}</span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-secondary-500">Paiements echoués:</span>
@@ -143,13 +233,19 @@ export default function Dashboard() {
                                         placeholder="Rechercher..."
                                         className="pl-9 pr-4 py-1.5 text-sm border border-secondary-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 w-full sm:w-48"
                                         value={searchTerm}
-                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        onChange={(e) => {
+                                            setSearchTerm(e.target.value);
+                                            setCurrentPage(1); // Reset to first page on search
+                                        }}
                                     />
                                 </div>
                                 <select
                                     className="px-3 py-1.5 text-sm border border-secondary-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 bg-white"
                                     value={statusFilter}
-                                    onChange={(e) => setStatusFilter(e.target.value)}
+                                    onChange={(e) => {
+                                        setStatusFilter(e.target.value);
+                                        setCurrentPage(1); // Reset to first page on filter
+                                    }}
                                 >
                                     <option value="ALL">Tous les statuts</option>
                                     <option value="SUCCESS">Succès</option>
@@ -157,49 +253,69 @@ export default function Dashboard() {
                                 </select>
                             </div>
                         </CardHeader>
-                        <CardContent className="flex-1 overflow-hidden p-0">
+                        <CardContent className="flex-1 overflow-hidden p-0 flex flex-col">
                             {data.length > 0 ? (
-                                <div className="overflow-auto max-h-[600px]">
-                                    <Table>
-                                        <TableHeader>
-                                            <TableRow>
-                                                <TableHead>Statut</TableHead>
-                                                <TableHead>ID de la transaction</TableHead>
-                                                <TableHead>Nom</TableHead>
-                                                <TableHead>Montant</TableHead>
-                                                <TableHead>Message</TableHead>
-                                            </TableRow>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {filteredData.map((row, i) => (
-                                                <TableRow key={i}>
-                                                    <TableCell>
-                                                        <span className={cn(
-                                                            "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
-                                                            row.status === 'SUCCESS' ? "bg-primary-100 text-primary-800" : "bg-red-100 text-red-800"
-                                                        )}>
-                                                            {row.status === 'SUCCESS' ? (
-                                                                <CheckCircle className="w-3 h-3 mr-1" />
-                                                            ) : (
-                                                                <XCircle className="w-3 h-3 mr-1" />
-                                                            )}
-                                                            {row.status}
-                                                        </span>
-                                                    </TableCell>
-                                                    <TableCell className="font-mono text-xs text-secondary-500">{row.transactionId}</TableCell>
-                                                    <TableCell className="font-medium">{row.name || row.Name || 'N/A'}</TableCell>
-                                                    <TableCell>{row.amount || row.Amount || 'N/A'}</TableCell>
-                                                    <TableCell className="text-secondary-500 max-w-xs truncate" title={row.message}>{row.message}</TableCell>
+                                <>
+                                    <div className="overflow-auto flex-1">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead>Statut</TableHead>
+                                                    <TableHead>ID Transaction</TableHead>
+                                                    <TableHead>Type ID</TableHead>
+                                                    <TableHead>Valeur ID</TableHead>
+                                                    <TableHead>Nom Complet</TableHead>
+                                                    <TableHead>Montant</TableHead>
+                                                    <TableHead>Devise</TableHead>
+                                                    <TableHead>Message</TableHead>
                                                 </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
-                                    {filteredData.length === 0 && (
-                                        <div className="p-8 text-center text-secondary-500">
-                                            Aucun résultat trouvé correspondant à vos filtres.
+                                            </TableHeader>
+                                            <TableBody>
+                                                {currentItems.map((row, i) => (
+                                                    <TableRow key={i}>
+                                                        <TableCell>
+                                                            <span className={cn(
+                                                                "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
+                                                                row.status === 'SUCCESS' ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                                                            )}>
+                                                                {row.status === 'SUCCESS' ? (
+                                                                    <CheckCircle className="w-3 h-3 mr-1" />
+                                                                ) : (
+                                                                    <XCircle className="w-3 h-3 mr-1" />
+                                                                )}
+                                                                {row.status}
+                                                            </span>
+                                                        </TableCell>
+                                                        <TableCell className="font-mono text-xs text-secondary-500">{row.transactionId}</TableCell>
+                                                        <TableCell>{row.type_id}</TableCell>
+                                                        <TableCell>{row.valeur_id}</TableCell>
+                                                        <TableCell className="font-medium">{row.nom_complet}</TableCell>
+                                                        <TableCell>{row.montant}</TableCell>
+                                                        <TableCell>{row.devise}</TableCell>
+                                                        <TableCell className="text-secondary-500 max-w-xs truncate" title={row.message}>{row.message}</TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                        {filteredData.length === 0 && (
+                                            <div className="p-8 text-center text-secondary-500">
+                                                Aucun résultat trouvé correspondant à vos filtres.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Pagination */}
+                                    {filteredData.length > itemsPerPage && (
+                                        <div className="p-4 border-t border-secondary-200">
+                                            <Pagination
+                                                totalItems={filteredData.length}
+                                                itemsPerPage={itemsPerPage}
+                                                currentPage={currentPage}
+                                                onPageChange={setCurrentPage}
+                                            />
                                         </div>
                                     )}
-                                </div>
+                                </>
                             ) : (
                                 <div className="h-64 flex flex-col items-center justify-center text-secondary-400">
                                     <div className="p-4 bg-secondary-50 rounded-full mb-3">

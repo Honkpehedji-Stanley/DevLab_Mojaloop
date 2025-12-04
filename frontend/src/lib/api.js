@@ -18,35 +18,39 @@ const generateMockResponse = (inputData) => {
     });
 };
 
+const PENSION_API_URL = 'http://localhost:5000/api/pension';
+
 export const api = {
-    uploadPensions: async (file) => {
-        return new Promise((resolve, reject) => {
-            // Simulate network delay
-            setTimeout(() => {
-                Papa.parse(file, {
-                    header: true,
-                    complete: (results) => {
-                        try {
-                            if (results.data.length === 0) {
-                                reject(new Error("File is empty"));
-                                return;
-                            }
+    validatePensions: async (file) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const response = await axios.post(`${PENSION_API_URL}/validate`, formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            throw new Error(error.response?.data?.message || 'Validation failed');
+        }
+    },
 
-                            const processedData = generateMockResponse(results.data);
+    confirmPensions: async (uploadId) => {
+        try {
+            const response = await axios.post(`${PENSION_API_URL}/confirm`, { uploadId });
+            return response.data;
+        } catch (error) {
+            throw new Error(error.response?.data?.message || 'Confirmation failed');
+        }
+    },
 
-                            // Convert back to CSV
-                            const csv = Papa.unparse(processedData);
-                            resolve({ data: processedData, csvRaw: csv });
-                        } catch (err) {
-                            reject(new Error("Failed to process file"));
-                        }
-                    },
-                    error: (err) => {
-                        reject(new Error("Failed to parse CSV"));
-                    }
-                });
-            }, 2000); // 2 seconds delay
-        });
+    cancelPensions: async (uploadId) => {
+        try {
+            await axios.post(`${PENSION_API_URL}/cancel`, { uploadId });
+        } catch (error) {
+            console.error('Cancellation failed', error);
+        }
     },
 
     login: async (email, password) => {

@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 export function Navbar({ onLogout }) {
     return (
         <nav className="bg-white border-b border-secondary-200 sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="max-w-[1650px] mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="flex justify-between h-16">
                     <div className="flex items-center">
                         <div className="flex-shrink-0 flex items-center">
@@ -22,7 +22,7 @@ export function Navbar({ onLogout }) {
                             <span className="text-xs text-secondary-500">Departement Finance</span>
                         </div>
                         <div className="h-8 w-px bg-secondary-200 mx-2 hidden md:block"></div>
-                        <Button variant="ghost" size="sm" onClick={onLogout} className="text-secondary-600">
+                        <Button variant="redGhost" size="sm" onClick={onLogout} className="text-secondary-600">
                             <LogOut className="w-4 h-4 mr-2" />
                             Se deconnecter
                         </Button>

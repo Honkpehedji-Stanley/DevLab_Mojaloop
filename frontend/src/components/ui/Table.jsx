@@ -53,7 +53,7 @@ export function TableHead({ className, children, ...props }) {
 
 export function TableCell({ className, children, ...props }) {
     return (
-        <td className={cn("p-4 align-middle text-secondary-900", className)} {...props}>
+        <td className={cn("px-4 py-2 align-middle text-secondary-900", className)} {...props}>
             {children}
         </td>
     );

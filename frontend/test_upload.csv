@@ -1,0 +1,6 @@
+name,amount
+John Doe,100.50
+Jane Smith,200.00
+Invalid Row,abc
+Missing Amount,
+,50.00
