@@ -14,16 +14,21 @@ services:
     networks:
       - mojaloop-itk-net
     env_file: ./mojaloop-connector-load-test.env
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
     ports:
       - "8000:8000"
     volumes:
       - ./gateway:/app/gateway:rw
       - ./secrets:/app/secrets:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       - db
       - redis
       - mojaloop-connector-load-test
-    command: ["sh", "-c", "./scripts/wait-for-db.sh db && python gateway/manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
+    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && python gateway/manage.py migrate --noinput && gunicorn gateway.wsgi:application --bind 0.0.0.0:8000"]
 
   # Celery worker for async tasks
   celery:
@@ -32,13 +37,18 @@ services:
     networks:
       - mojaloop-itk-net
     env_file: ./mojaloop-connector-load-test.env
+    environment:
+      POSTGRES_DB: gateway
+      POSTGRES_USER: gateway
+      POSTGRES_PASSWORD: gateway
     volumes:
       - ./gateway:/app/gateway:rw
       - ./secrets:/app/secrets:ro
+      - ./scripts:/app/scripts:ro
     depends_on:
       - redis
       - db
-    command: ["sh", "-c", "./scripts/wait-for-db.sh db && celery -A gateway worker -l info"]
+    command: ["sh", "-c", "/app/scripts/wait-for-db.sh db && celery -A gateway worker -l info"]
 
   # Postgres for persistence
   db:
@@ -52,7 +62,7 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5433:5433"
 
   # Redis (already present previously) - used for cache and celery broker
   redis:

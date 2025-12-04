@@ -1,0 +1,14 @@
+nohup: les entrées sont ignorées
+Traceback (most recent call last):
+  File "/home/stanley-honkpehedji/DevLab_Mojaloop/backend/gateway/manage.py", line 14, in main
+    from django.core.management import execute_from_command_line
+ModuleNotFoundError: No module named 'django'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/stanley-honkpehedji/DevLab_Mojaloop/backend/gateway/manage.py", line 25, in <module>
+    main()
+  File "/home/stanley-honkpehedji/DevLab_Mojaloop/backend/gateway/manage.py", line 16, in main
+    raise ImportError(
+ImportError: Couldn't import Django. Are you sure it's installed and available on your PYTHONPATH environment variable? Did you forget to activate a virtual environment?

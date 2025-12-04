@@ -1,13 +1,25 @@
 #!/usr/bin/env python
-"""Minimal manage.py placeholder (squelette).
+"""Django's command-line utility for administrative tasks.
 
-Remplacer par le manage.py généré par `django-admin startproject`.
+This file was added to provide a working manage.py so that
+`python manage.py migrate` and other management commands work.
 """
+import os
 import sys
 
+
 def main():
-    print('manage.py placeholder - run `django-admin startproject gateway` to initialize')
-    sys.exit(0)
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'gateway.settings.dev')
+    try:
+        from django.core.management import execute_from_command_line
+    except ImportError as exc:
+        raise ImportError(
+            "Couldn't import Django. Are you sure it's installed and "
+            "available on your PYTHONPATH environment variable? Did you "
+            "forget to activate a virtual environment?"
+        ) from exc
+    execute_from_command_line(sys.argv)
+
 
 if __name__ == '__main__':
     main()
