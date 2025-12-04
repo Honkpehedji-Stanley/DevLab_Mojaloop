@@ -40,7 +40,7 @@ export function FileUpload({ onFileSelect, isUploading, error }) {
             onFileSelect(file);
         } else {
             // Handle invalid file type
-            alert("Please upload a CSV file.");
+            alert("Veuillez charger un fichier CSV.");
         }
     };
 
@@ -88,7 +88,7 @@ export function FileUpload({ onFileSelect, isUploading, error }) {
                         </p>
                         {!isUploading && (
                             <Button variant="ghost" size="sm" onClick={removeFile} className="text-red-600 hover:text-red-700 hover:bg-red-50">
-                                Remove file
+                                Supprimer le fichier
                             </Button>
                         )}
                     </div>
@@ -98,17 +98,17 @@ export function FileUpload({ onFileSelect, isUploading, error }) {
                             <Upload className="w-8 h-8 text-secondary-400" />
                         </div>
                         <p className="text-lg font-medium text-secondary-900 mb-1">
-                            Click to upload or drag and drop
+                            Cliquer pour charger ou glisser et déposer
                         </p>
                         <p className="text-sm text-secondary-500">
-                            CSV files only (max 10MB)
+                           Fichiers CSV uniquement (max 10MB)
                         </p>
                         <Button
                             variant="secondary"
                             className="mt-4"
                             onClick={() => inputRef.current?.click()}
                         >
-                            Select File
+                            Charger le fichier
                         </Button>
                     </div>
                 )}

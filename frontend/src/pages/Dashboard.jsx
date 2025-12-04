@@ -117,7 +117,7 @@ export default function Dashboard() {
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-secondary-500">Paiements faits:</span>
-                                            <span className="font-medium text-green-600">{lastUpload.successCount}</span>
+                                            <span className="font-medium text-primary-600">{lastUpload.successCount}</span>
                                         </div>
                                         <div className="flex justify-between">
                                             <span className="text-secondary-500">Paiements echoués:</span>
@@ -140,7 +140,7 @@ export default function Dashboard() {
                                     <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-secondary-400" />
                                     <input
                                         type="text"
-                                        placeholder="Search..."
+                                        placeholder="Rechercher..."
                                         className="pl-9 pr-4 py-1.5 text-sm border border-secondary-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 w-full sm:w-48"
                                         value={searchTerm}
                                         onChange={(e) => setSearchTerm(e.target.value)}
@@ -176,7 +176,7 @@ export default function Dashboard() {
                                                     <TableCell>
                                                         <span className={cn(
                                                             "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
-                                                            row.status === 'SUCCESS' ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                                                            row.status === 'SUCCESS' ? "bg-primary-100 text-primary-800" : "bg-red-100 text-red-800"
                                                         )}>
                                                             {row.status === 'SUCCESS' ? (
                                                                 <CheckCircle className="w-3 h-3 mr-1" />
@@ -205,7 +205,7 @@ export default function Dashboard() {
                                     <div className="p-4 bg-secondary-50 rounded-full mb-3">
                                         <FileText className="w-8 h-8" />
                                     </div>
-                                    <p>Importez un fuchier CSV pour voir les résultas</p>
+                                    <p>Importez un fichier CSV pour voir les résultas</p>
                                 </div>
                             )}
                         </CardContent>

@@ -22,76 +22,119 @@ export default function Login({ onLogin }) {
             onLogin();
             navigate('/');
         } catch (err) {
-            setError(err.message || 'Invalid email or password');
+            setError(err.message || 'Email ou mot de passe invalide');
         } finally {
             setIsLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-secondary-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
-            <div className="sm:mx-auto sm:w-full sm:max-w-md">
-                <div className="flex justify-center">
-                    <div className="w-12 h-12 bg-primary-600 rounded-xl flex items-center justify-center shadow-lg shadow-primary-600/20">
-                        <ShieldCheck className="w-7 h-7 text-white" />
+        <div className="min-h-screen bg-emerald-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-5xl h-[600px] bg-white rounded-3xl shadow-2xl overflow-hidden flex">
+                {/* Left Side - Illustration/Branding */}
+                <div className="hidden md:flex w-1/2 bg-emerald-100 flex-col items-center justify-center p-12 relative">
+                    <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                        <div className="absolute top-10 left-10 w-20 h-20 rounded-full bg-emerald-500"></div>
+                        <div className="absolute bottom-20 right-20 w-32 h-32 rounded-full bg-emerald-600"></div>
+                        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-64 h-64 rounded-full border-4 border-emerald-200"></div>
+                    </div>
+
+                    <div className="z-10 flex flex-col items-center text-center">
+                        <div className="w-24 h-24 bg-white rounded-2xl flex items-center justify-center shadow-lg shadow-emerald-500/20 mb-8 animate-fade-in-up">
+                            <ShieldCheck className="w-12 h-12 text-emerald-600" />
+                        </div>
+                        <h2 className="text-3xl font-bold text-emerald-900 mb-4 animate-fade-in-up animation-delay-100">
+                            Pension Pay
+                        </h2>
+                        <p className="text-emerald-700 max-w-xs animate-fade-in-up animation-delay-200">
+                            Plateforme de gestion administrative des paiements de pension sécurisée et efficace.
+                        </p>
+                    </div>
+
+                    <div className="absolute bottom-8 flex gap-2">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <div className="w-2 h-2 rounded-full bg-emerald-300"></div>
+                        <div className="w-2 h-2 rounded-full bg-emerald-300"></div>
                     </div>
                 </div>
-                <h2 className="mt-6 text-center text-3xl font-extrabold text-secondary-900 tracking-tight">
-                    Sign in to your account
-                </h2>
-                <p className="mt-2 text-center text-sm text-secondary-600">
-                    Pension Payment Platform Admin
-                </p>
-            </div>
 
-            <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-                <div className="bg-white py-8 px-4 shadow-xl shadow-secondary-200/50 sm:rounded-xl sm:px-10 border border-secondary-100">
-                    <form className="space-y-6" onSubmit={handleSubmit}>
-                        <Input
-                            label="Email address"
-                            type="email"
-                            required
-                            value={email}
-                            onChange={(e) => setEmail(e.target.value)}
-                            placeholder="admin@pensionpay.com"
-                        />
+                {/* Right Side - Login Form */}
+                <div className="w-full md:w-1/2 p-8 md:p-12 flex flex-col justify-center bg-white">
+                    <div className="max-w-md mx-auto w-full">
+                        <div className="text-center mb-10">
+                            <h2 className="text-2xl font-bold text-gray-900 mb-2">Se connecter</h2>
+                            <p className="text-gray-500 text-sm">Bienvenue sur votre espace administrateur</p>
+                        </div>
 
-                        <Input
-                            label="Password"
-                            type="password"
-                            required
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            placeholder="••••••••"
-                        />
+                        <form className="space-y-6" onSubmit={handleSubmit}>
+                            <Input
+                                label="Email"
+                                type="email"
+                                required
+                                value={email}
+                                onChange={(e) => setEmail(e.target.value)}
+                                placeholder="admin@pensionpay.com"
+                                className="bg-gray-50 border-gray-200 focus:border-emerald-500 focus:ring-emerald-500"
+                            />
 
-                        {error && (
-                            <div className="rounded-md bg-red-50 p-4 animate-fade-in">
-                                <div className="flex">
-                                    <div className="ml-3">
-                                        <h3 className="text-sm font-medium text-red-800">{error}</h3>
-                                    </div>
+                            <div>
+                                <Input
+                                    label="Mot de passe"
+                                    type="password"
+                                    required
+                                    value={password}
+                                    onChange={(e) => setPassword(e.target.value)}
+                                    placeholder="••••••••"
+                                    className="bg-gray-50 border-gray-200 focus:border-emerald-500 focus:ring-emerald-500"
+                                />
+                                <div className="flex justify-end mt-1">
+                                    <a href="#" className="text-xs font-medium text-emerald-600 hover:text-emerald-500">
+                                        Mot de passe oublié ?
+                                    </a>
                                 </div>
                             </div>
-                        )}
 
-                        <div>
+                            {error && (
+                                <div className="rounded-lg bg-red-50 p-3 text-sm text-red-600 flex items-center animate-fade-in">
+                                    <span className="mr-2">⚠️</span>
+                                    {error}
+                                </div>
+                            )}
+
                             <Button
                                 type="submit"
-                                className="w-full"
+                                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white h-11 rounded-lg shadow-lg shadow-emerald-500/30 transition-all duration-200"
                                 disabled={isLoading}
                             >
                                 {isLoading ? (
                                     <>
                                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                        Signing in...
+                                        Connexion...
                                     </>
                                 ) : (
-                                    'Sign in'
+                                    'Se connecter'
                                 )}
                             </Button>
-                        </div>
-                    </form>
+
+                            <div className="relative my-6">
+                                <div className="absolute inset-0 flex items-center">
+                                    <div className="w-full border-t border-gray-200"></div>
+                                </div>
+                                <div className="relative flex justify-center text-sm">
+                                    <span className="px-2 bg-white text-gray-500">Ou</span>
+                                </div>
+                            </div>
+
+                            <div className="text-center">
+                                <p className="text-sm text-gray-600">
+                                    Nouveau sur la plateforme ?{' '}
+                                    <a href="#" className="font-medium text-emerald-600 hover:text-emerald-500">
+                                        Créer un compte
+                                    </a>
+                                </p>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             </div>
         </div>

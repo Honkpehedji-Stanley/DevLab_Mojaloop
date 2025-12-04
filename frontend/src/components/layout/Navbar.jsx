@@ -19,12 +19,12 @@ export function Navbar({ onLogout }) {
                     <div className="flex items-center">
                         <div className="hidden md:flex flex-col items-end mr-4">
                             <span className="text-sm font-medium text-secondary-900">Admin User</span>
-                            <span className="text-xs text-secondary-500">Finance Dept.</span>
+                            <span className="text-xs text-secondary-500">Departement Finance</span>
                         </div>
                         <div className="h-8 w-px bg-secondary-200 mx-2 hidden md:block"></div>
                         <Button variant="ghost" size="sm" onClick={onLogout} className="text-secondary-600">
                             <LogOut className="w-4 h-4 mr-2" />
-                            Logout
+                            Se deconnecter
                         </Button>
                     </div>
                 </div>
