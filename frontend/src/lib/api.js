@@ -3,20 +3,20 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api/auth';
 
-// Mock data generation for the response
-const generateMockResponse = (inputData) => {
-    return inputData.map((row, index) => {
-        // Simulate some failures
-        const isSuccess = Math.random() > 0.2;
-        return {
-            ...row,
-            transactionId: `TXN-${Date.now()}-${index}`,
-            status: isSuccess ? 'SUCCESS' : 'FAILED',
-            processedAt: new Date().toISOString(),
-            message: isSuccess ? 'Payment processed successfully' : 'Insufficient funds or invalid account details'
-        };
-    });
-};
+// // Mock data generation for the response
+// const generateMockResponse = (inputData) => {
+//     return inputData.map((row, index) => {
+//         // Simulate some failures
+//         const isSuccess = Math.random() > 0.2;
+//         return {
+//             ...row,
+//             transactionId: `TXN-${Date.now()}-${index}`,
+//             status: isSuccess ? 'SUCCESS' : 'FAILED',
+//             processedAt: new Date().toISOString(),
+//             message: isSuccess ? 'Payment processed successfully' : 'Insufficient funds or invalid account details'
+//         };
+//     });
+// };
 
 const PENSION_API_URL = 'http://localhost:5000/api/pension';
 
