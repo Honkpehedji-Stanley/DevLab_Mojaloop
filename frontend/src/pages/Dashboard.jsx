@@ -11,6 +11,7 @@ import { cn } from '../lib/utils';
 
 export default function Dashboard() {
     const [data, setData] = useState([]);
+    const [file, setFile] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -18,6 +19,9 @@ export default function Dashboard() {
     const [lastUpload, setLastUpload] = useState(null);
     const [currentPage, setCurrentPage] = useState(1);
     const [validationResult, setValidationResult] = useState(null);
+    const [bulkStatus, setBulkStatus] = useState(null);
+    const [processingMessage, setProcessingMessage] = useState('');
+
     const itemsPerPage = 8;
 
     const handleFileUpload = async (file) => {
@@ -32,6 +36,58 @@ export default function Dashboard() {
             setValidationResult(result);
         } catch (err) {
             setError(err.message);
+            console.error(err);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleSubmitFile = async (file) => {
+        if (!file) return;
+
+        setIsLoading(true);
+        setError(null);
+        setBulkStatus(null);
+        setProcessingMessage('Upload du fichier CSV...');
+
+        try {
+            // Upload CSV and create bulk transfer
+            const result = await api.uploadCSV(file);
+
+            setProcessingMessage(`Transfert créé: ${result.bulkTransferId}. Traitement en cours...`);
+            setBulkStatus(result);
+
+            // Poll for status updates
+            const finalStatus = await api.pollBulkStatus(
+                result.bulkTransferId,
+                (status) => {
+                    setBulkStatus(status);
+                    const completed = status.individualTransfers?.filter(t => t.status === 'COMPLETED').length || 0;
+                    const total = status.individualTransfers?.length || 0;
+                    setProcessingMessage(`Traitement: ${completed}/${total} transferts complétés...`);
+
+                    // Update table data in real-time
+                    const mappedData = status.individualTransfers.map((transfer) => ({
+                        transactionId: transfer.transferId,
+                        type_id: transfer.payee_party_id_type,
+                        valeur_id: transfer.payee_party_identifier,
+                        nom_complet: transfer.payee_name || '-',
+                        montant: transfer.amount,
+                        devise: transfer.currency,
+                        status: transfer.status === 'COMPLETED' ? 'SUCCESS' : (transfer.status === 'PENDING' ? 'PENDING' : 'FAILED'),
+                        message: transfer.status === 'COMPLETED'
+                            ? 'Transfert complété avec succès'
+                            : (transfer.status === 'PENDING' ? 'En attente de traitement' : 'Transfert échoué'),
+                        completed_at: transfer.completed_at
+                    }));
+                    setData(mappedData);
+                }
+            );
+
+            setProcessingMessage('');
+        } catch (err) {
+            setError(err.message);
+            setProcessingMessage('');
             console.error(err);
         } finally {
             setIsLoading(false);
@@ -128,6 +184,7 @@ export default function Dashboard() {
                             {!validationResult ? (
                                 <>
                                     <FileUpload
+                                        sendFile={setFile}
                                         onFileSelect={handleFileUpload}
                                         isUploading={isLoading}
                                         error={error}
@@ -175,7 +232,7 @@ export default function Dashboard() {
 
                                     <div className="flex flex-col gap-3">
                                         <Button
-                                            onClick={handleConfirm}
+                                            onClick={() => handleSubmitFile(file)}
                                             disabled={isLoading}
                                             className="w-full"
                                         >

@@ -2,6 +2,10 @@ import Papa from 'papaparse';
 import axios from 'axios';
 
 const API_URL = 'http://localhost:5000/api/auth';
+const BACKEND_URL = 'http://localhost:8000/api';
+
+// Default payer account - can be configured
+const DEFAULT_PAYER_ACCOUNT = 'PAYER-001';
 
 // // Mock data generation for the response
 // const generateMockResponse = (inputData) => {
@@ -21,6 +25,24 @@ const API_URL = 'http://localhost:5000/api/auth';
 const PENSION_API_URL = 'http://localhost:5000/api/pension';
 
 export const api = {
+    uploadCSV: async (file, payerAccount = DEFAULT_PAYER_ACCOUNT) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('payer_account', payerAccount);
+
+        try {
+            const response = await axios.post(`${BACKEND_URL}/bulk-transfers`, formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            const message = error.response?.data?.error || error.message || 'Upload failed';
+            throw new Error(message);
+        }
+    },
+
     validatePensions: async (file) => {
         const formData = new FormData();
         formData.append('file', file);

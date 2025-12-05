@@ -3,7 +3,7 @@ import { Upload, FileText, X, CheckCircle, AlertCircle } from 'lucide-react';
 import { Button } from './Button';
 import { cn } from '../../lib/utils';
 
-export function FileUpload({ onFileSelect, isUploading, error }) {
+export function FileUpload({ onFileSelect, isUploading, error, sendFile }) {
     const [dragActive, setDragActive] = useState(false);
     const [file, setFile] = useState(null);
     const inputRef = useRef(null);
@@ -37,6 +37,7 @@ export function FileUpload({ onFileSelect, isUploading, error }) {
     const handleFile = (file) => {
         if (file.type === "text/csv" || file.name.endsWith('.csv')) {
             setFile(file);
+            sendFile(file);
             onFileSelect(file);
         } else {
             // Handle invalid file type
