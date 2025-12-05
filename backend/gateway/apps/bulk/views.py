@@ -589,3 +589,213 @@ def bulk_status(request, bulk_id):
         'individualTransfers': individuals,
     }
     return JsonResponse(data)
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description="""
+    Liste l'historique de tous les transferts en masse (bulk transfers).
+    
+    **Permissions:**
+    - GESTIONNAIRE : Voit tous les transferts de son organisation
+    - SUPERVISEUR : Voit tous les transferts de son organisation (lecture seule)
+    
+    **Filtres disponibles:**
+    - `state`: Filtrer par état (PENDING, PROCESSING, COMPLETED, FAILED)
+    - `start_date`: Date de début (format: YYYY-MM-DD)
+    - `end_date`: Date de fin (format: YYYY-MM-DD)
+    - `limit`: Nombre de résultats (défaut: 50, max: 200)
+    - `offset`: Pagination offset (défaut: 0)
+    
+    **Exemple:**
+    ```
+    GET /api/bulk-transfers?state=COMPLETED&limit=20
+    ```
+    """,
+    manual_parameters=[
+        openapi.Parameter('state', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+        openapi.Parameter('start_date', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+        openapi.Parameter('end_date', openapi.IN_QUERY, type=openapi.TYPE_STRING),
+        openapi.Parameter('limit', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+        openapi.Parameter('offset', openapi.IN_QUERY, type=openapi.TYPE_INTEGER),
+    ],
+    responses={
+        200: openapi.Response(
+            description='Liste des transferts en masse',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'total': openapi.Schema(type=openapi.TYPE_INTEGER),
+                    'results': openapi.Schema(type=openapi.TYPE_ARRAY, items=openapi.Schema(type=openapi.TYPE_OBJECT)),
+                }
+            )
+        )
+    }
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_bulk_transfers(request):
+    """
+    Liste tous les transferts en masse pour l'organisation de l'utilisateur.
+    GESTIONNAIRE et SUPERVISEUR peuvent voir l'historique de leur organisation.
+    """
+    from datetime import datetime
+    
+    # Filtrer par organisation de l'utilisateur
+    queryset = BulkTransfer.objects.filter(
+        payer_account__organization=request.user.organization
+    ).select_related('payer_account', 'payer_account__organization')
+    
+    # Filtres optionnels
+    state = request.GET.get('state')
+    if state:
+        queryset = queryset.filter(state=state)
+    
+    start_date = request.GET.get('start_date')
+    if start_date:
+        try:
+            start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__gte=start_dt)
+        except ValueError:
+            pass
+    
+    end_date = request.GET.get('end_date')
+    if end_date:
+        try:
+            end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            queryset = queryset.filter(created_at__lte=end_dt)
+        except ValueError:
+            pass
+    
+    # Pagination
+    limit = int(request.GET.get('limit', 50))
+    limit = min(limit, 200)  # Max 200
+    offset = int(request.GET.get('offset', 0))
+    
+    total = queryset.count()
+    results = queryset.order_by('-created_at')[offset:offset + limit]
+    
+    # Serialiser les résultats
+    bulk_list = []
+    for bulk in results:
+        # Compter les transferts par état
+        transfers_count = bulk.individual_transfers.count()
+        completed_count = bulk.individual_transfers.filter(state='COMPLETED').count()
+        failed_count = bulk.individual_transfers.filter(state='FAILED').count()
+        
+        bulk_list.append({
+            'id': bulk.id,
+            'bulk_id': bulk.bulk_id,
+            'state': bulk.state,
+            'total_amount': bulk.total_amount,
+            'currency': bulk.currency,
+            'transfers_count': transfers_count,
+            'completed_count': completed_count,
+            'failed_count': failed_count,
+            'payer_account': bulk.payer_account.account_id if bulk.payer_account else None,
+            'organization': bulk.payer_account.organization.name if bulk.payer_account and bulk.payer_account.organization else None,
+            'created_at': bulk.created_at.isoformat() if bulk.created_at else None,
+            'completed_at': bulk.completed_at.isoformat() if bulk.completed_at else None,
+        })
+    
+    return Response({
+        'total': total,
+        'count': len(bulk_list),
+        'limit': limit,
+        'offset': offset,
+        'results': bulk_list
+    })
+
+
+@swagger_auto_schema(
+    method='get',
+    operation_description="""
+    Récupère les détails complets d'un transfert en masse spécifique.
+    
+    Inclut tous les transferts individuels avec leur état, montant, et destinataire.
+    
+    **Permissions:**
+    - Accessible uniquement aux utilisateurs de la même organisation
+    """,
+    responses={
+        200: openapi.Response(description='Détails du transfert en masse'),
+        404: 'Transfert non trouvé',
+        403: 'Accès refusé (pas la même organisation)'
+    }
+)
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_bulk_transfer_details(request, bulk_id):
+    """
+    Récupère les détails complets d'un transfert en masse avec tous ses transferts individuels.
+    """
+    try:
+        bulk = BulkTransfer.objects.select_related(
+            'payer_account',
+            'payer_account__organization'
+        ).get(bulk_id=bulk_id)
+    except BulkTransfer.DoesNotExist:
+        return Response(
+            {'error': f'Transfert en masse {bulk_id} introuvable'},
+            status=status.HTTP_404_NOT_FOUND
+        )
+    
+    # Vérifier que l'utilisateur appartient à la même organisation
+    if bulk.payer_account and bulk.payer_account.organization != request.user.organization:
+        return Response(
+            {'error': 'Accès refusé : ce transfert appartient à une autre organisation'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+    
+    # Récupérer tous les transferts individuels
+    individual_transfers = bulk.individual_transfers.all().order_by('created_at')
+    
+    transfers_data = []
+    for transfer in individual_transfers:
+        transfers_data.append({
+            'id': transfer.id,
+            'transfer_id': transfer.transfer_id,
+            'amount': transfer.amount,
+            'currency': transfer.currency,
+            'payee_party_id_type': transfer.payee_party_id_type,
+            'payee_party_identifier': transfer.payee_party_identifier,
+            'state': transfer.state,
+            'error_code': transfer.error_code,
+            'error_description': transfer.error_description,
+            'created_at': transfer.created_at.isoformat() if transfer.created_at else None,
+            'completed_at': transfer.completed_at.isoformat() if transfer.completed_at else None,
+        })
+    
+    # Statistiques
+    total_transfers = individual_transfers.count()
+    completed = individual_transfers.filter(state='COMPLETED').count()
+    failed = individual_transfers.filter(state='FAILED').count()
+    pending = individual_transfers.filter(state='PENDING').count()
+    processing = individual_transfers.filter(state='PROCESSING').count()
+    
+    return Response({
+        'bulk_id': bulk.bulk_id,
+        'state': bulk.state,
+        'total_amount': bulk.total_amount,
+        'currency': bulk.currency,
+        'payer_account': {
+            'account_id': bulk.payer_account.account_id if bulk.payer_account else None,
+            'party_id_type': bulk.payer_account.party_id_type if bulk.payer_account else None,
+            'party_identifier': bulk.payer_account.party_identifier if bulk.payer_account else None,
+        },
+        'organization': {
+            'name': bulk.payer_account.organization.name if bulk.payer_account and bulk.payer_account.organization else None,
+            'code': bulk.payer_account.organization.code if bulk.payer_account and bulk.payer_account.organization else None,
+        },
+        'statistics': {
+            'total': total_transfers,
+            'completed': completed,
+            'failed': failed,
+            'pending': pending,
+            'processing': processing,
+            'success_rate': round((completed / total_transfers * 100) if total_transfers > 0 else 0, 2),
+        },
+        'created_at': bulk.created_at.isoformat() if bulk.created_at else None,
+        'completed_at': bulk.completed_at.isoformat() if bulk.completed_at else None,
+        'individual_transfers': transfers_data,
+    })
