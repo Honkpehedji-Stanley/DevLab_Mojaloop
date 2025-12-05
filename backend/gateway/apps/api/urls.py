@@ -1,5 +1,7 @@
 from django.urls import path
+from apps.accounts import views as account_views
 
 urlpatterns = [
-    # Ex: path('quotes/', include('apps.transactions.urls'))
+    # Organizations
+    path('organizations', account_views.list_organizations, name='list_organizations'),
 ]
