@@ -19,7 +19,7 @@ export const usePermissions = () => {
         setPermissions({
             canCreateTransfers: user.role === 'GESTIONNAIRE',
             canViewTransfers: true, // Tous les utilisateurs authentifiés peuvent voir
-            isAdmin: user.is_staff || user.is_superuser || false,
+            isAdmin: (user.is_staff === true && user.is_superuser === true) || false,
             isGestionnaire: user.role === 'GESTIONNAIRE',
             isSuperviseur: user.role === 'SUPERVISEUR',
             role: user.role || null,

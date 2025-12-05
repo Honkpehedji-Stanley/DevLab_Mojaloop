@@ -10,7 +10,8 @@ export function Navbar({ onLogout }) {
     useEffect(() => {
         const userData = JSON.parse(localStorage.getItem('user') || '{}');
         setUser(userData);
-        setIsAdmin(userData.is_staff || userData.is_superuser || false);
+        // Seuls les utilisateurs avec is_superuser=true ET is_staff=true sont admins
+        setIsAdmin((userData.is_staff === true && userData.is_superuser === true) || false);
     }, []);
 
     return (
