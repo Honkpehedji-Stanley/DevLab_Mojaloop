@@ -52,16 +52,12 @@ axios.interceptors.response.use(
 
 export const api = {
     // Auth
-    login: async (username, password) => {
+    login: async (email, password) => {
         try {
-            const response = await axios.post(`${API_URL}/login`, { username, password });
-            const { access, refresh } = response.data;
+            const response = await axios.post(`${API_URL}/login`, { email, password });
+            const { access, refresh, user } = response.data;
             localStorage.setItem('accessToken', access);
             localStorage.setItem('refreshToken', refresh);
-
-            // Fetch user details after login if needed, or just store username
-            // For now, we'll store a simple user object
-            const user = { username };
             localStorage.setItem('user', JSON.stringify(user));
 
             return { user, access, refresh };
@@ -126,5 +122,32 @@ export const api = {
     // SSE Helper
     getBulkTransferStreamUrl: (bulkId) => {
         return `${BACKEND_URL}/bulk-transfers/${bulkId}/stream`;
+    },
+
+    // Admin - User Management
+    adminCreateUser: async (userData) => {
+        try {
+            const response = await axios.post(`${API_URL}/admin/users`, userData);
+            return response.data; // { user, temporary_password, email_sent, message }
+        } catch (error) {
+            const message = error.response?.data?.error ||
+                error.response?.data?.email?.[0] ||
+                error.response?.data?.detail ||
+                error.message ||
+                'Échec de la création de l\'utilisateur';
+            throw new Error(message);
+        }
+    },
+
+    // Get organizations list
+    getOrganizations: async () => {
+        try {
+            const response = await axios.get(`${BACKEND_URL}/organizations`);
+            return response.data;
+        } catch (error) {
+            throw new Error(error.response?.data?.error || 'Échec de récupération des organisations');
+        }
     }
 };
+
+export default api;

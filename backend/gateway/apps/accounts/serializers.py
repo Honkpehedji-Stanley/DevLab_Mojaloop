@@ -118,6 +118,8 @@ class EmailTokenObtainPairSerializer(TokenObtainPairSerializer):
                 'username': user.username,
                 'role': user.role,
                 'organization': user.organization.code if user.organization else None,
+                'is_staff': user.is_staff,
+                'is_superuser': user.is_superuser,
             }
         }
         

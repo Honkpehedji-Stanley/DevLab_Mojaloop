@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Lock, User } from 'lucide-react';
+import { Lock, Mail } from 'lucide-react';
 
 const LoginPage = () => {
-    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
@@ -16,7 +16,7 @@ const LoginPage = () => {
         setError('');
         setLoading(true);
         try {
-            await login(username, password);
+            await login(email, password);
             navigate('/');
         } catch (err) {
             setError(err.message || 'Failed to login');
@@ -50,22 +50,22 @@ const LoginPage = () => {
                         )}
 
                         <div>
-                            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-                                Username
+                            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                                Email
                             </label>
                             <div className="mt-1 relative rounded-md shadow-sm">
                                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                    <User className="h-5 w-5 text-gray-400" aria-hidden="true" />
+                                    <Mail className="h-5 w-5 text-gray-400" aria-hidden="true" />
                                 </div>
                                 <input
-                                    id="username"
-                                    name="username"
-                                    type="text"
+                                    id="email"
+                                    name="email"
+                                    type="email"
                                     required
                                     className="focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-10 sm:text-sm border-gray-300 rounded-md py-2 border"
-                                    placeholder="Enter your username"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
+                                    placeholder="votre.email@cnss.bj"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
                                 />
                             </div>
                         </div>

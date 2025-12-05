@@ -2,6 +2,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'r
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
+import CreateUser from './pages/admin/CreateUser';
 import { Layout } from './components/layout/Layout';
 
 const PrivateRoute = ({ children }) => {
@@ -30,6 +31,16 @@ const AppContent = () => {
           <PrivateRoute>
             <Layout onLogout={logout}>
               <Dashboard />
+            </Layout>
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/admin/users/create"
+        element={
+          <PrivateRoute>
+            <Layout onLogout={logout}>
+              <CreateUser />
             </Layout>
           </PrivateRoute>
         }
