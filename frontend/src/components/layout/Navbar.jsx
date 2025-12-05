@@ -43,7 +43,9 @@ export function Navbar({ onLogout }) {
                     <div className="flex items-center gap-4">
                         <div className="hidden md:flex flex-col items-end">
                             <span className="text-sm font-medium text-secondary-900">
-                                {user?.first_name || user?.username || 'Admin User'}
+                                {user?.first_name && user?.last_name
+                                    ? `${user.first_name} ${user.last_name}`
+                                    : user?.username || 'Utilisateur'}
                             </span>
                             <span className="text-xs text-secondary-500">
                                 {user?.role_display || user?.role || 'Administrateur'}

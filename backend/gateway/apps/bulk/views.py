@@ -14,6 +14,7 @@ from django.conf import settings
 from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from . import serializers as sers
@@ -88,11 +89,10 @@ def create_bulk_transfers(request):
     # Récupérer le compte de l'organisation de l'utilisateur
     payer_account_id = request.POST.get('payer_account')
     
-    # Si pas de payer_account fourni, utiliser le premier compte actif de l'organisation
+    # Si pas de payer_account fourni, utiliser le premier compte de l'organisation
     if not payer_account_id:
         payer_account = Account.objects.filter(
-            organization=request.user.organization,
-            organization__is_active=True
+            organization=request.user.organization
         ).first()
         if not payer_account:
             return HttpResponseBadRequest(
@@ -569,8 +569,22 @@ def bulk_status(request, bulk_id):
             content_type='application/json'
         )
 
+    # Récupérer tous les transferts individuels
+    all_individuals = bulk.individuals.all()
+    total_count = all_individuals.count()
+    completed_count = all_individuals.filter(status='COMPLETED').count()
+    failed_count = all_individuals.filter(status='FAILED').count()
+    
+    # Calculer la progression
+    progress_percent = (completed_count + failed_count) / total_count * 100 if total_count > 0 else 0
+
     individuals = []
-    for it in bulk.individuals.all():
+    for it in all_individuals:
+        # Récupérer les informations du bénéficiaire depuis le compte ou le CSV original
+        payee_name = None
+        if it.payee_account:
+            payee_name = it.payee_account.account_holder_name
+        
         individuals.append({
             'transferId': it.transfer_id,
             'amount': it.amount,
@@ -578,6 +592,10 @@ def bulk_status(request, bulk_id):
             'status': it.status,
             'fulfilment': it.fulfilment,
             'completed_at': it.completed_at.isoformat() if it.completed_at else None,
+            'payee_party_id_type': it.payee_party_id_type,
+            'payee_party_identifier': it.payee_party_identifier,
+            'payee_name': payee_name,
+            'error_message': getattr(it, 'error_description', None) or getattr(it, 'error_code', None),
         })
 
     data = {
@@ -586,6 +604,11 @@ def bulk_status(request, bulk_id):
         'total_amount': bulk.total_amount,
         'currency': bulk.currency,
         'payer_account': bulk.payer_account.account_id if bulk.payer_account else None,
+        'total': total_count,
+        'completed': completed_count,
+        'failed': failed_count,
+        'pending': total_count - completed_count - failed_count,
+        'progress_percent': round(progress_percent, 2),
         'individualTransfers': individuals,
     }
     return JsonResponse(data)
@@ -679,9 +702,9 @@ def list_bulk_transfers(request):
     bulk_list = []
     for bulk in results:
         # Compter les transferts par état
-        transfers_count = bulk.individual_transfers.count()
-        completed_count = bulk.individual_transfers.filter(state='COMPLETED').count()
-        failed_count = bulk.individual_transfers.filter(state='FAILED').count()
+        transfers_count = bulk.individuals.count()
+        completed_count = bulk.individuals.filter(status='COMPLETED').count()
+        failed_count = bulk.individuals.filter(status='FAILED').count()
         
         bulk_list.append({
             'id': bulk.id,
@@ -695,7 +718,6 @@ def list_bulk_transfers(request):
             'payer_account': bulk.payer_account.account_id if bulk.payer_account else None,
             'organization': bulk.payer_account.organization.name if bulk.payer_account and bulk.payer_account.organization else None,
             'created_at': bulk.created_at.isoformat() if bulk.created_at else None,
-            'completed_at': bulk.completed_at.isoformat() if bulk.completed_at else None,
         })
     
     return Response({
@@ -748,7 +770,7 @@ def get_bulk_transfer_details(request, bulk_id):
         )
     
     # Récupérer tous les transferts individuels
-    individual_transfers = bulk.individual_transfers.all().order_by('created_at')
+    individual_transfers = bulk.individuals.all().order_by('id')
     
     transfers_data = []
     for transfer in individual_transfers:
@@ -759,19 +781,18 @@ def get_bulk_transfer_details(request, bulk_id):
             'currency': transfer.currency,
             'payee_party_id_type': transfer.payee_party_id_type,
             'payee_party_identifier': transfer.payee_party_identifier,
-            'state': transfer.state,
-            'error_code': transfer.error_code,
-            'error_description': transfer.error_description,
-            'created_at': transfer.created_at.isoformat() if transfer.created_at else None,
+            'status': transfer.status,
+            'error_code': getattr(transfer, 'error_code', None),
+            'error_description': getattr(transfer, 'error_description', None),
             'completed_at': transfer.completed_at.isoformat() if transfer.completed_at else None,
         })
     
     # Statistiques
     total_transfers = individual_transfers.count()
-    completed = individual_transfers.filter(state='COMPLETED').count()
-    failed = individual_transfers.filter(state='FAILED').count()
-    pending = individual_transfers.filter(state='PENDING').count()
-    processing = individual_transfers.filter(state='PROCESSING').count()
+    completed = individual_transfers.filter(status='COMPLETED').count()
+    failed = individual_transfers.filter(status='FAILED').count()
+    pending = individual_transfers.filter(status='PENDING').count()
+    processing = individual_transfers.filter(status='PROCESSING').count()
     
     return Response({
         'bulk_id': bulk.bulk_id,
@@ -796,6 +817,5 @@ def get_bulk_transfer_details(request, bulk_id):
             'success_rate': round((completed / total_transfers * 100) if total_transfers > 0 else 0, 2),
         },
         'created_at': bulk.created_at.isoformat() if bulk.created_at else None,
-        'completed_at': bulk.completed_at.isoformat() if bulk.completed_at else None,
         'individual_transfers': transfers_data,
     })

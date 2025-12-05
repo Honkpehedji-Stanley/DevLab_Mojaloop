@@ -37,6 +37,9 @@ export default function Dashboard() {
         offset: 0,
     });
     const [total, setTotal] = useState(0);
+    const [showDetailsModal, setShowDetailsModal] = useState(false);
+    const [selectedBulk, setSelectedBulk] = useState(null);
+    const [loadingDetails, setLoadingDetails] = useState(false);
     const permissions = usePermissions();
 
     useEffect(() => {
@@ -56,6 +59,25 @@ export default function Dashboard() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const viewBulkDetails = async (bulkId) => {
+        setLoadingDetails(true);
+        setShowDetailsModal(true);
+        try {
+            const details = await api.getBulkTransferDetails(bulkId);
+            setSelectedBulk(details);
+        } catch (error) {
+            console.error('Erreur lors du chargement des détails:', error);
+            setSelectedBulk(null);
+        } finally {
+            setLoadingDetails(false);
+        }
+    };
+
+    const closeDetailsModal = () => {
+        setShowDetailsModal(false);
+        setSelectedBulk(null);
     };
 
     const formatDate = (isoString) => {
@@ -613,7 +635,7 @@ export default function Dashboard() {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="sm"
-                                                                onClick={() => window.open(`/transfers/${item.bulk_id}`, '_blank')}
+                                                                onClick={() => viewBulkDetails(item.bulk_id)}
                                                                 className="flex items-center gap-1"
                                                             >
                                                                 <Eye className="w-4 h-4" />
@@ -658,6 +680,171 @@ export default function Dashboard() {
                     </>
                 )}
             </div>
+
+            {/* Modal pour les détails du bulk transfer */}
+            {showDetailsModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+                        {/* Header du modal */}
+                        <div className="flex items-center justify-between p-6 border-b border-secondary-200">
+                            <div>
+                                <h2 className="text-xl font-semibold text-secondary-900">
+                                    Détails du transfert
+                                </h2>
+                                {selectedBulk && (
+                                    <p className="text-sm text-secondary-600 mt-1">
+                                        {selectedBulk.bulk_id}
+                                    </p>
+                                )}
+                            </div>
+                            <button
+                                onClick={closeDetailsModal}
+                                className="text-secondary-400 hover:text-secondary-600 transition-colors"
+                            >
+                                <XCircle className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        {/* Contenu du modal */}
+                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
+                            {loadingDetails ? (
+                                <div className="flex items-center justify-center py-12">
+                                    <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+                                    <span className="ml-3 text-secondary-600">Chargement des détails...</span>
+                                </div>
+                            ) : selectedBulk ? (
+                                <>
+                                    {/* Informations générales */}
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                                        <div className="bg-secondary-50 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary-600 mb-1">Montant total</div>
+                                            <div className="text-lg font-semibold text-secondary-900">
+                                                {formatAmount(selectedBulk.total_amount, selectedBulk.currency)}
+                                            </div>
+                                        </div>
+                                        <div className="bg-secondary-50 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary-600 mb-1">État</div>
+                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStateColor(selectedBulk.state)}`}>
+                                                {getStateLabel(selectedBulk.state)}
+                                            </span>
+                                        </div>
+                                        <div className="bg-secondary-50 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary-600 mb-1">Organisation</div>
+                                            <div className="text-sm font-medium text-secondary-900">
+                                                {selectedBulk.organization?.name || '-'}
+                                            </div>
+                                        </div>
+                                        <div className="bg-secondary-50 p-4 rounded-lg">
+                                            <div className="text-xs text-secondary-600 mb-1">Date de création</div>
+                                            <div className="text-sm font-medium text-secondary-900">
+                                                {formatDate(selectedBulk.created_at)}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Statistiques */}
+                                    {selectedBulk.statistics && (
+                                        <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-4 rounded-lg mb-6">
+                                            <h3 className="text-sm font-semibold text-secondary-900 mb-3">Statistiques</h3>
+                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                                <div>
+                                                    <div className="text-xs text-secondary-600">Total</div>
+                                                    <div className="text-xl font-bold text-secondary-900">{selectedBulk.statistics.total}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-green-600">Complétés</div>
+                                                    <div className="text-xl font-bold text-green-700">{selectedBulk.statistics.completed}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-red-600">Échoués</div>
+                                                    <div className="text-xl font-bold text-red-700">{selectedBulk.statistics.failed}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-yellow-600">En attente</div>
+                                                    <div className="text-xl font-bold text-yellow-700">{selectedBulk.statistics.pending}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-xs text-secondary-600">Taux de succès</div>
+                                                    <div className="text-xl font-bold text-primary-600">{selectedBulk.statistics.success_rate}%</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Liste des transactions individuelles */}
+                                    <div>
+                                        <h3 className="text-sm font-semibold text-secondary-900 mb-3">
+                                            Transactions individuelles ({selectedBulk.individual_transfers?.length || 0})
+                                        </h3>
+                                        <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                                            <div className="overflow-x-auto">
+                                                <table className="w-full">
+                                                    <thead className="bg-secondary-50">
+                                                        <tr>
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">ID Transaction</th>
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Bénéficiaire</th>
+                                                            <th className="px-4 py-3 text-right text-xs font-medium text-secondary-600">Montant</th>
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">État</th>
+                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Date</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-secondary-200">
+                                                        {selectedBulk.individual_transfers?.map((transfer, index) => (
+                                                            <tr key={transfer.transfer_id || index} className="hover:bg-secondary-50">
+                                                                <td className="px-4 py-3 text-sm font-mono text-secondary-700">
+                                                                    {transfer.transfer_id}
+                                                                </td>
+                                                                <td className="px-4 py-3 text-sm text-secondary-900">
+                                                                    <div>
+                                                                        <div className="font-medium">{transfer.payee_party_identifier}</div>
+                                                                        <div className="text-xs text-secondary-500">{transfer.payee_party_id_type}</div>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-4 py-3 text-sm text-right font-medium text-secondary-900">
+                                                                    {formatAmount(transfer.amount, transfer.currency)}
+                                                                </td>
+                                                                <td className="px-4 py-3">
+                                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${transfer.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
+                                                                            transfer.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                                                                                transfer.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
+                                                                                    'bg-yellow-100 text-yellow-800'
+                                                                        }`}>
+                                                                        {transfer.status === 'COMPLETED' ? 'Complété' :
+                                                                            transfer.status === 'FAILED' ? 'Échoué' :
+                                                                                transfer.status === 'PROCESSING' ? 'En cours' : 'En attente'}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-4 py-3 text-sm text-secondary-600">
+                                                                    {formatDate(transfer.completed_at)}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="flex flex-col items-center justify-center py-12">
+                                    <AlertCircle className="w-12 h-12 text-red-500 mb-3" />
+                                    <p className="text-secondary-600">Erreur lors du chargement des détails</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer du modal */}
+                        <div className="flex items-center justify-end gap-3 p-6 border-t border-secondary-200 bg-secondary-50">
+                            <Button
+                                variant="secondary"
+                                onClick={closeDetailsModal}
+                            >
+                                Fermer
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

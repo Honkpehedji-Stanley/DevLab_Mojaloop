@@ -1,0 +1,50 @@
+Nettoyage du projet - 5 décembre 2025
+=====================================
+
+Fichiers supprimés:
+-------------------
+1. Documentation IA temporaire:
+   - /CORS_TROUBLESHOOTING.md
+   - /GUIDE_DEMARRAGE.md
+   - /HISTORIQUE_TRANSFERTS.md
+   - /INTEGRATION_UPLOAD_CSV.md
+   - /frontend/LOGIN_FORMULAIRE.md
+
+2. Scripts de test temporaires:
+   - /setup.sh
+   - /backend/start.sh
+   - /backend/test-workflow.sh
+
+3. Dossiers vides:
+   - /k6-load-test-script.js/
+
+Fichiers conservés:
+------------------
+1. README principaux (mis à jour):
+   - /README.md (Vue d'ensemble du projet)
+   - /backend/README.md (Documentation backend Django)
+   - /frontend/README.md (Documentation frontend React)
+
+2. Scripts nécessaires (backend/scripts/):
+   - entrypoint.sh (Point d'entrée Docker)
+   - init-auth-data.sh (Initialisation données auth)
+   - migrate.sh (Migrations Django)
+   - start-celery.sh (Démarrage Celery)
+   - start-web.sh (Démarrage serveur web)
+   - wait-for-db.sh (Attente base de données)
+
+3. Fichiers de configuration:
+   - Backend: docker-compose.yml, Dockerfile, mojaloop-connector-load-test.env
+   - Frontend: package.json, vite.config.js, tailwind.config.js, etc.
+
+4. Fichiers d'exemple:
+   - frontend/test_pensions.csv (Exemple de fichier CSV)
+
+Structure finale:
+----------------
+DevLab_Mojaloop/
+├── backend/          # Application Django avec Docker
+├── frontend/         # Application React avec Vite
+└── README.md         # Documentation principale
+
+Total: 13 dossiers, 15 fichiers (hors node_modules, venv, cache)

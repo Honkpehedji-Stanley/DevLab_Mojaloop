@@ -1,495 +1,471 @@
-# Gateway Django Mojaloop - Plateforme de Paiement de Pensions
+# Backend - Plateforme de Paiement des Pensions CNSS
 
-API REST Django pour la gestion de transferts groupés de pensions via le protocole Mojaloop. Cette gateway permet aux organismes payeurs (CNSS, etc.) de créer et monitorer des paiements de pensions en masse en temps réel.
+API REST Django pour la gestion des paiements de pensions via Mojaloop.
 
 ## Architecture
 
-```
-┌─────────────────┐
-│   Frontend      │
-│   (React/JS)    │
-└────────┬────────┘
-         │ HTTP/SSE
-         ▼
-┌─────────────────┐      ┌──────────────┐
-│  Django Gateway │◄────►│    Redis     │
-│   (Port 8000)   │      │  (Broker)    │
-└────────┬────────┘      └──────────────┘
-         │
-         ├──► Celery Worker (tâches async)
-         │
-         ├──► SQLite / PostgreSQL
-         │
-         ▼
-┌─────────────────┐      ┌──────────────┐
-│  SDK Adapter    │◄────►│  Mock Hub    │
-│  (Port 4001)    │      │  (Port 4040) │
-└─────────────────┘      └──────────────┘
-```
-
-## Fonctionnalités
-
-### Authentification JWT
-
-La plateforme utilise l'authentification JWT (JSON Web Tokens) pour sécuriser l'accès.
-
-**Rôles utilisateurs:**
-- **GESTIONNAIRE**: Peut créer des bulk transfers de pensions
-- **SUPERVISEUR**: Consultation uniquement (lecture seule)
-
-**Endpoints d'authentification:**
-- `POST /api/auth/login` - Connexion (retourne access + refresh tokens)
-- `POST /api/auth/refresh` - Rafraîchir le token d'accès
-- `POST /api/auth/logout` - Déconnexion (blacklist le refresh token)
-- `GET /api/auth/me` - Profil utilisateur connecté
-
-### Endpoints Bulk Transfers (authentifiés)
-
-1. **POST /api/bulk-transfers**
-   - Crée un bulk transfer à partir d'un fichier CSV
-   - Réserve les fonds sur le compte de l'organisation
-   - Lance le traitement asynchrone via Celery
-   - **Permissions**: GESTIONNAIRE uniquement
-
-2. **GET /api/bulk-transfers/{id}/stream** (SSE)
-   - Stream temps réel de la progression du bulk transfer
-   - Mises à jour automatiques toutes les secondes
-   - Fermeture automatique à la fin du traitement
-   - **Permissions**: Membres de la même organisation
-
-3. **GET /api/bulk-transfers/{id}/status**
-   - Récupère l'état actuel du bulk transfer
-   - Détails de tous les transferts individuels
-   - **Permissions**: Membres de la même organisation
-
-### Formats CSV Supportés
-
-**Format standard:**
-```csv
-transferId,amount,currency,partyIdType,partyIdentifier
-tx-001,10000,XOF,MSISDN,22890123456
-tx-002,5000,XOF,MSISDN,22890654321
-```
-
-**Format payment list (transferId auto-généré):**
-```csv
-type_id,valeur_id,devise,montant
-MSISDN,22890123456,XOF,10000
-MSISDN,22890654321,XOF,5000
-```
-
-## Installation
-
-### Prérequis
-
-- Docker & Docker Compose
-- Git
-
-### Démarrage rapide
-
-```bash
-# Cloner le repository
-git clone <repository-url>
-cd backend
-
-# Créer le fichier .env depuis le template
-cp .env.example .env
-
-# Éditer le .env et configurer DJANGO_SECRET_KEY
-nano .env
-
-# Démarrer tous les services
-docker compose up -d --build
-
-# Vérifier que les services sont actifs
-docker compose ps
-
-# Appliquer les migrations
-docker exec -w /app/gateway gateway-web python manage.py migrate
-
-# Créer les données de test (organisation + utilisateurs + compte)
-bash scripts/init-auth-data.sh
-```
-
-### Accès aux services
-
-- Django API: http://localhost:8000
-- Swagger UI: http://localhost:8000/swagger/
-- SDK Adapter: http://localhost:4001
-- Mock Hub: http://localhost:4040
-- Redis: localhost:6379
-
-## Utilisation
-
-### Authentification
-
-Tous les endpoints nécessitent une authentification JWT. Obtenez d'abord un token :
-
-```bash
-# 1. Se connecter pour obtenir un token JWT
-curl -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "gestionnaire",
-    "password": "Pensions2025!"
-  }'
-
-# Réponse: 
-# {
-#   "access": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-#   "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-# }
-
-# 2. Utiliser le token dans les requêtes suivantes
-export TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-
-# 3. Rafraîchir le token (valable 7 jours)
-curl -X POST http://localhost:8000/api/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }'
-
-# 4. Se déconnecter (blacklist le token)
-curl -X POST http://localhost:8000/api/auth/logout \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "refresh": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-  }'
-```
-
-### Workflow complet en 3 étapes
-
-```bash
-# Prérequis: définir le token d'authentification
-export TOKEN="votre_access_token_jwt"
-
-# 1. Créer un bulk transfer (nécessite rôle GESTIONNAIRE)
-curl -X POST http://localhost:8000/api/bulk-transfers \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@transfers.csv" \
-  -F "callback_url=http://localhost:8000/api/transfers"
-
-# Réponse: {"bulkTransferId": "bulk-xxx", "state": "PENDING"}
-# Note: Le compte payer_account est automatiquement celui de l'organisation de l'utilisateur
-
-# 2. Monitorer en temps réel (SSE) - nécessite authentification
-curl -N http://localhost:8000/api/bulk-transfers/bulk-xxx/stream \
-  -H "Authorization: Bearer $TOKEN"
-
-# Stream de progression:
-# data: {"state": "PROCESSING", "completed": 10, "total": 90, "progress_percent": 11.11}
-# data: {"state": "PROCESSING", "completed": 45, "total": 90, "progress_percent": 50.0}
-# data: {"state": "COMPLETED", "completed": 90, "total": 90, "progress_percent": 100.0}
-
-# 3. Récupérer le statut final détaillé
-curl http://localhost:8000/api/bulk-transfers/bulk-xxx/status \
-  -H "Authorization: Bearer $TOKEN" | jq
-```
-
-### Intégration Frontend (JavaScript)
-
-```javascript
-// Configuration globale de l'authentification
-let accessToken = null;
-let refreshToken = null;
-
-// Fonction de login
-async function login(username, password) {
-  const response = await fetch('http://localhost:8000/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password })
-  });
-  
-  const data = await response.json();
-  accessToken = data.access;
-  refreshToken = data.refresh;
-  
-  // Stocker dans localStorage pour persistance
-  localStorage.setItem('accessToken', accessToken);
-  localStorage.setItem('refreshToken', refreshToken);
-}
-
-// Fonction pour rafraîchir le token automatiquement
-async function refreshAccessToken() {
-  const response = await fetch('http://localhost:8000/api/auth/refresh', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh: refreshToken })
-  });
-  
-  const data = await response.json();
-  accessToken = data.access;
-  localStorage.setItem('accessToken', accessToken);
-}
-
-// Étape 1: Créer le bulk transfer avec authentification
-const formData = new FormData();
-formData.append('file', csvFile);
-formData.append('callback_url', 'http://localhost:8000/api/transfers');
-
-const response = await fetch('http://localhost:8000/api/bulk-transfers', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${accessToken}`
-  },
-  body: formData
-});
-
-if (response.status === 401) {
-  // Token expiré, rafraîchir et réessayer
-  await refreshAccessToken();
-  // Relancer la requête avec nouveau token...
-}
-
-const { bulkTransferId } = await response.json();
-
-// Étape 2: Stream SSE pour updates en temps réel avec authentification
-// Note: EventSource ne supporte pas les headers personnalisés nativement
-// Utiliser une approche alternative avec fetch + ReadableStream ou un polyfill
-
-const streamResponse = await fetch(
-  `http://localhost:8000/api/bulk-transfers/${bulkTransferId}/stream`,
-  {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`,
-      'Accept': 'text/event-stream'
-    }
-  }
-);
-
-const reader = streamResponse.body.getReader();
-const decoder = new TextDecoder();
-
-while (true) {
-  const { done, value } = await reader.read();
-  if (done) break;
-  
-  const chunk = decoder.decode(value);
-  const lines = chunk.split('\n');
-  
-  for (const line of lines) {
-    if (line.startsWith('data: ')) {
-      const data = JSON.parse(line.substring(6));
-      console.log(`Progression: ${data.progress_percent}%`);
-      updateProgressBar(data.completed, data.total);
-      
-      if (data.state === 'COMPLETED' || data.state === 'FAILED') {
-        reader.cancel();
-        break;
-      }
-    }
-  }
-}
-
-// Étape 3: Récupérer le statut final
-const statusResponse = await fetch(
-  `http://localhost:8000/api/bulk-transfers/${bulkTransferId}/status`,
-  {
-    headers: {
-      'Authorization': `Bearer ${accessToken}`
-    }
-  }
-);
-const statusData = await statusResponse.json();
-displayResults(statusData);
-};
-
-eventSource.addEventListener('done', (event) => {
-  const data = JSON.parse(event.data);
-  console.log('Transfert terminé:', data.state);
-  eventSource.close();
-  
-  // Étape 3: Récupérer les détails finaux
-  fetchFinalStatus(bulkTransferId);
-});
-
-eventSource.addEventListener('error', (event) => {
-  console.error('Erreur SSE');
-  eventSource.close();
-});
-```
-
-## Configuration
-
-### Variables d'environnement (.env)
-
-```bash
-# Django
-DJANGO_SECRET_KEY=change-me-in-production
-DJANGO_DEBUG=True
-DJANGO_SETTINGS_MODULE=gateway.settings.dev
-
-# Base de données
-USE_SQLITE=True  # False pour PostgreSQL
-
-# PostgreSQL (si USE_SQLITE=False)
-POSTGRES_DB=gateway
-POSTGRES_USER=gateway
-POSTGRES_PASSWORD=secure-password
-POSTGRES_HOST=db
-POSTGRES_PORT=5432
-
-# Mojaloop SDK Adapter
-SCHEME_ADAPTER_URL=http://mojaloop-connector-load-test:4001
-
-# Celery + Redis
-CELERY_BROKER_URL=redis://redis:6379/0
-CELERY_RESULT_BACKEND=redis://redis:6379/0
-```
-
-## Développement
-
-### Structure du projet
+### Technologies utilisées
+
+- **Django 5.1** - Framework web Python
+- **Django REST Framework** - Framework pour API REST
+- **Simple JWT** - Authentification JWT
+- **SQLite** - Base de données (développement)
+- **Gunicorn** - Serveur WSGI pour production
+- **Docker** - Conteneurisation
+- **Swagger/OpenAPI** - Documentation API
+
+### Structure du code
 
 ```
 backend/
-├── docker-compose.yml          # Orchestration des services
-├── Dockerfile                  # Image Django + Celery
-├── .env.example                # Template de configuration
-├── gateway/
-│   ├── manage.py               # CLI Django
-│   ├── requirements.txt        # Dépendances Python
-│   ├── apps/
-│   │   └── bulk/
-│   │       ├── models.py       # Account, BulkTransfer, IndividualTransfer
-│   │       ├── views.py        # Endpoints principaux
-│   │       ├── sse_views.py    # Server-Sent Events
-│   │       └── tasks.py        # Tâches Celery
-│   └── gateway/
-│       ├── settings/
-│       │   ├── base.py         # Configuration de base
-│       │   └── dev.py          # Configuration développement
-│       └── celery.py           # Configuration Celery
-└── secrets/                    # Clés JWS Mojaloop
-```
-
-### Commandes utiles
-
-```bash
-# Logs en temps réel
-docker compose logs -f
-
-# Logs d'un service spécifique
-docker compose logs -f web
-docker compose logs -f celery
-
-# Redémarrer un service
-docker compose restart web
-
-# Shell Django
-docker exec -it -w /app/gateway gateway-web python manage.py shell
-
-# Migrations
-docker exec -w /app/gateway gateway-web python manage.py makemigrations
-docker exec -w /app/gateway gateway-web python manage.py migrate
-
-# Créer un superuser
-docker exec -it -w /app/gateway gateway-web python manage.py createsuperuser
-
-# Arrêter tous les services
-docker compose down
-
-# Nettoyer les volumes
-docker compose down -v
-```
-
-## Tests
-
-```bash
-# Tester la création d'un compte
-docker exec -w /app/gateway gateway-web python manage.py shell -c "
-from apps.bulk.models import Account
-acc = Account.objects.create(
-    party_id_type='MSISDN',
-    party_identifier='999888777',
-    account_id='TEST-ACC',
-    balance=5000000,
-    reserved=0
-)
-print(f'Créé: {acc}')
-"
-
-# Tester le workflow complet
-bash test-workflow.sh
+├── gateway/                    # Projet Django principal
+│   ├── apps/                  # Applications Django
+│   │   ├── accounts/         # Gestion utilisateurs, organisations
+│   │   │   ├── models.py     # Models User, Organization
+│   │   │   ├── views.py      # Endpoints auth, profil, admin
+│   │   │   ├── serializers.py # Sérialiseurs JWT, User
+│   │   │   └── permissions.py # Permissions personnalisées
+│   │   ├── bulk/             # Transferts en masse
+│   │   │   ├── models.py     # Models Account, BulkTransfer, IndividualTransfer
+│   │   │   ├── views.py      # Endpoints bulk transfers
+│   │   │   ├── tasks.py      # Tâches Celery (orchestration)
+│   │   │   └── serializers.py # Sérialiseurs API
+│   │   └── transactions/     # Transactions individuelles
+│   │       ├── models.py     # Models Transfer, Quote
+│   │       └── views.py      # Endpoints transactions
+│   └── gateway/              # Configuration Django
+│       ├── settings/         # Settings par environnement
+│       │   ├── base.py       # Configuration commune
+│       │   ├── dev.py        # Configuration développement
+│       │   └── prod.py       # Configuration production
+│       ├── urls.py           # URLs principales
+│       └── wsgi.py           # Point d'entrée WSGI
+├── configs/                   # Fichiers de configuration
+│   └── ttk/                  # Configuration Testing Toolkit
+├── scripts/                   # Scripts utilitaires
+│   ├── entrypoint.sh         # Script de démarrage Docker
+│   ├── migrate.sh            # Script de migration
+│   └── wait-for-db.sh        # Attente base de données
+├── docker-compose.yml        # Configuration Docker Compose
+├── Dockerfile                # Image Docker
+└── requirements.txt          # Dépendances Python
 ```
 
 ## Modèles de données
 
+### Organization
+Représente une organisation (CNSS, partenaires).
+- `code` : Code unique de l'organisation
+- `name` : Nom complet
+- `is_active` : Statut actif/inactif
+
+### User
+Utilisateur de la plateforme (hérite de AbstractUser Django).
+- `email` : Email (utilisé pour la connexion)
+- `first_name`, `last_name` : Nom et prénom
+- `role` : GESTIONNAIRE ou SUPERVISEUR
+- `organization` : Organisation de rattachement
+- `phone_number` : Numéro de téléphone
+
 ### Account
-```python
-party_id_type: str       # Type d'identifiant (MSISDN, etc.)
-party_identifier: str    # Numéro de téléphone, etc.
-account_id: str          # Identifiant unique du compte
-balance: int             # Solde en unités mineures (centimes)
-reserved: int            # Montant réservé pour transferts en cours
-```
+Compte de paiement associé à une organisation.
+- `account_id` : Identifiant unique du compte
+- `organization` : Organisation propriétaire
+- `party_id_type` : Type d'identifiant (MSISDN, PERSONAL_ID, etc.)
+- `party_identifier` : Identifiant de la partie
+- `balance` : Solde en centimes
+- `reserved` : Montant réservé pour transferts en cours
 
 ### BulkTransfer
-```python
-bulk_id: str             # Identifiant unique (bulk-xxxx)
-payer_account: Account   # Compte payeur
-total_amount: int        # Montant total en unités mineures
-currency: str            # Devise (XOF, NGN, etc.)
-state: str               # PENDING, PROCESSING, COMPLETED, FAILED, PARTIALLY_COMPLETED
-created_at: datetime     # Date de création
-```
+Transfert groupé contenant plusieurs transactions.
+- `bulk_id` : Identifiant unique du bulk
+- `payer_account` : Compte payeur
+- `total_amount` : Montant total en centimes
+- `currency` : Devise (XOF par défaut)
+- `state` : PENDING, PROCESSING, COMPLETED, FAILED
+- `created_at` : Date de création
 
 ### IndividualTransfer
-```python
-transfer_id: str                  # Identifiant unique du transfert
-bulk: BulkTransfer                # Bulk parent
-payee_party_id_type: str          # Type d'identifiant du bénéficiaire
-payee_party_identifier: str       # Identifiant du bénéficiaire
-amount: int                       # Montant en unités mineures
-currency: str                     # Devise
-status: str                       # PENDING, COMPLETED, FAILED
-completed_at: datetime            # Date de complétion
+Transaction individuelle au sein d'un bulk.
+- `transfer_id` : Identifiant unique de la transaction
+- `bulk` : Référence au bulk parent
+- `payee_party_id_type` : Type d'identifiant bénéficiaire
+- `payee_party_identifier` : Identifiant bénéficiaire
+- `payee_account` : Compte bénéficiaire (si trouvé)
+- `amount` : Montant en centimes
+- `status` : PENDING, COMPLETED, FAILED
+- `completed_at` : Date de complétion
+
+## API Endpoints
+
+### Authentification
+
+#### POST /api/auth/login
+Connexion avec email et mot de passe.
+
+**Request:**
+```json
+{
+  "email": "gestionnaire@cnss.bj",
+  "password": "Pass@123"
+}
 ```
 
-## Sécurité
+**Response:**
+```json
+{
+  "access": "eyJ0eXAiOiJKV1QiLCJ...",
+  "refresh": "eyJ0eXAiOiJKV1QiLCJ...",
+  "user": {
+    "id": 1,
+    "email": "gestionnaire@cnss.bj",
+    "first_name": "Gestionnaire",
+    "last_name": "CNSS",
+    "role": "GESTIONNAIRE"
+  }
+}
+```
 
-### Production
+#### POST /api/auth/token/refresh
+Rafraîchir le token d'accès.
 
-- Changer `DJANGO_SECRET_KEY` par une clé forte aléatoire
-- Définir `DJANGO_DEBUG=False`
-- Utiliser PostgreSQL au lieu de SQLite
-- Configurer HTTPS/TLS
-- Activer l'authentification dans REST_FRAMEWORK
-- Restreindre ALLOWED_HOSTS
+#### GET /api/auth/profile
+Récupérer le profil de l'utilisateur connecté.
 
-### Secrets
+### Transferts en masse
 
-Ne jamais commit:
-- `.env`
-- `secrets/`
-- `db.sqlite3`
-- `__pycache__/`
+#### POST /api/bulk-transfers
+Créer un transfert en masse via fichier CSV.
 
-## Dépannage
+**Headers:** `Authorization: Bearer <token>`
 
-### Le bulk reste en PENDING
-- Vérifier que Celery est actif: `docker compose logs celery`
-- Vérifier Redis: `docker compose logs redis`
-- Vérifier le SDK adapter: `curl http://localhost:4001`
+**Form Data:**
+- `file`: Fichier CSV (multipart/form-data)
 
-### Erreur "payer account not found"
-- Créer un compte avec la commande ci-dessus
-- Vérifier que `account_id` correspond
+**Format CSV:**
+```csv
+type_id,valeur_id,devise,montant
+MSISDN,22997000001,XOF,50000
+MSISDN,22997000002,XOF,75000
+```
 
-### SSE ne stream pas
-- Désactiver le buffering nginx si utilisé
-- Vérifier les headers `Cache-Control: no-cache`
+**Response:**
+```json
+{
+  "bulkTransferId": "bulk-abc123",
+  "state": "PENDING"
+}
+```
 
-## Licence
+#### GET /api/bulk-transfers/history
+Liste des transferts de l'organisation.
 
-Propriétaire
+**Query Parameters:**
+- `state`: Filtrer par état (PENDING, COMPLETED, FAILED)
+- `start_date`: Date début (YYYY-MM-DD)
+- `end_date`: Date fin (YYYY-MM-DD)
+- `limit`: Nombre de résultats (max 200, défaut 50)
+- `offset`: Offset pour pagination
+
+**Response:**
+```json
+{
+  "total": 100,
+  "count": 50,
+  "limit": 50,
+  "offset": 0,
+  "results": [
+    {
+      "id": 1,
+      "bulk_id": "bulk-abc123",
+      "state": "COMPLETED",
+      "total_amount": 1250000,
+      "currency": "XOF",
+      "transfers_count": 10,
+      "completed_count": 9,
+      "failed_count": 1,
+      "created_at": "2025-12-05T10:30:00Z"
+    }
+  ]
+}
+```
+
+#### GET /api/bulk-transfers/{bulk_id}/details
+Détails complets d'un transfert avec toutes les transactions.
+
+**Response:**
+```json
+{
+  "bulk_id": "bulk-abc123",
+  "state": "COMPLETED",
+  "total_amount": 1250000,
+  "currency": "XOF",
+  "payer_account": {
+    "account_id": "ACC-CNSS-001",
+    "party_id_type": "MSISDN",
+    "party_identifier": "22997000001"
+  },
+  "organization": {
+    "name": "CNSS Bénin",
+    "code": "CNSS"
+  },
+  "statistics": {
+    "total": 10,
+    "completed": 9,
+    "failed": 1,
+    "pending": 0,
+    "processing": 0,
+    "success_rate": 90.0
+  },
+  "created_at": "2025-12-05T10:30:00Z",
+  "individual_transfers": [
+    {
+      "id": 1,
+      "transfer_id": "transfer-001",
+      "amount": 50000,
+      "currency": "XOF",
+      "payee_party_id_type": "MSISDN",
+      "payee_party_identifier": "22997000001",
+      "status": "COMPLETED",
+      "completed_at": "2025-12-05T10:31:00Z"
+    }
+  ]
+}
+```
+
+#### GET /api/bulk-transfers/{bulk_id}/status
+Statut en temps réel avec progression.
+
+**Response:**
+```json
+{
+  "bulkTransferId": "bulk-abc123",
+  "state": "PROCESSING",
+  "total": 10,
+  "completed": 7,
+  "failed": 0,
+  "pending": 3,
+  "progress_percent": 70.0,
+  "individualTransfers": [...]
+}
+```
+
+### Administration (Admin uniquement)
+
+#### POST /api/admin/users/create
+Créer un nouvel utilisateur.
+
+**Request:**
+```json
+{
+  "email": "nouveau@cnss.bj",
+  "first_name": "Nouveau",
+  "last_name": "Utilisateur",
+  "role": "GESTIONNAIRE",
+  "organization_id": 1,
+  "phone_number": "22997000000"
+}
+```
+
+**Response:**
+```json
+{
+  "user": {...},
+  "temporary_password": "Gen3r4t3dP@ss",
+  "email_sent": true,
+  "message": "Utilisateur créé avec succès. Un email a été envoyé."
+}
+```
+
+## Installation et développement
+
+### Avec Docker (recommandé)
+
+```bash
+cd backend
+docker-compose up -d
+```
+
+Services démarrés :
+- `gateway-web` : API Django (port 8000)
+- `ml-testing-toolkit` : Simulateur Mojaloop (port 5000)
+
+### Sans Docker
+
+```bash
+cd backend/gateway
+
+# Créer environnement virtuel
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+venv\Scripts\activate     # Windows
+
+# Installer dépendances
+pip install -r requirements.txt
+
+# Appliquer migrations
+python manage.py migrate
+
+# Créer superutilisateur (optionnel)
+python manage.py createsuperuser
+
+# Démarrer serveur
+python manage.py runserver
+```
+
+### Variables d'environnement
+
+Créer un fichier `.env` dans `backend/gateway/` :
+
+```env
+# Django
+SECRET_KEY=votre-secret-key-tres-securisee
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+
+# Database (pour PostgreSQL en production)
+DATABASE_URL=postgres://user:password@localhost:5432/dbname
+
+# JWT
+JWT_ACCESS_TOKEN_LIFETIME=480  # 8 heures en minutes
+JWT_REFRESH_TOKEN_LIFETIME=10080  # 7 jours en minutes
+
+# Email
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=your-email@gmail.com
+EMAIL_HOST_PASSWORD=your-password
+
+# Mojaloop
+SCHEME_ADAPTER_URL=http://mojaloop-connector-load-test:4001
+```
+
+## Commandes utiles
+
+```bash
+# Migrations
+python manage.py makemigrations
+python manage.py migrate
+
+# Shell Django
+python manage.py shell
+
+# Tests
+python manage.py test
+
+# Créer un utilisateur via shell
+python manage.py shell
+>>> from apps.accounts.models import User, Organization
+>>> org = Organization.objects.get(code='CNSS')
+>>> User.objects.create_user(
+...     email='test@cnss.bj',
+...     password='password123',
+...     first_name='Test',
+...     last_name='User',
+...     role='GESTIONNAIRE',
+...     organization=org
+... )
+
+# Vérifier les comptes
+>>> from apps.bulk.models import Account
+>>> Account.objects.all()
+```
+
+## Permissions
+
+### IsGestionnaire
+Utilisateur avec role='GESTIONNAIRE'. Peut créer des transferts.
+
+### IsSuperviseur
+Utilisateur avec role='SUPERVISEUR'. Lecture seule.
+
+### IsAdminUser
+Utilisateur avec is_staff=True. Accès complet administration.
+
+### IsSameOrganization
+Vérifie que l'utilisateur appartient à la même organisation que la ressource.
+
+## Tests
+
+```bash
+# Tous les tests
+python manage.py test
+
+# Tests d'une app spécifique
+python manage.py test apps.bulk
+
+# Tests avec coverage
+coverage run --source='.' manage.py test
+coverage report
+```
+
+## Logs
+
+Les logs sont configurés dans `settings/base.py`. En production, configurer un système de logging centralisé (Sentry, CloudWatch, etc.).
+
+```python
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': '/var/log/django/app.log',
+        },
+    },
+    'root': {
+        'handlers': ['file'],
+        'level': 'INFO',
+    },
+}
+```
+
+## Migration vers PostgreSQL
+
+Pour la production, remplacer SQLite par PostgreSQL :
+
+1. Installer psycopg2 :
+   ```bash
+   pip install psycopg2-binary
+   ```
+
+2. Modifier `settings/prod.py` :
+   ```python
+   DATABASES = {
+       'default': {
+           'ENGINE': 'django.db.backends.postgresql',
+           'NAME': 'cnss_pensions',
+           'USER': 'cnss_user',
+           'PASSWORD': 'secure_password',
+           'HOST': 'localhost',
+           'PORT': '5432',
+       }
+   }
+   ```
+
+3. Exécuter les migrations :
+   ```bash
+   python manage.py migrate
+   ```
+
+## Sécurité en production
+
+1. Définir `DEBUG=False`
+2. Utiliser une SECRET_KEY forte et unique
+3. Configurer ALLOWED_HOSTS correctement
+4. Activer HTTPS uniquement
+5. Configurer CORS pour le domaine frontend uniquement
+6. Utiliser PostgreSQL avec SSL
+7. Configurer les headers de sécurité (HSTS, CSP, etc.)
+8. Rate limiting sur les endpoints sensibles
+9. Monitoring et alertes actifs
 
 ## Support
 
-Pour toute question, consulter:
-- Swagger UI: http://localhost:8000/swagger/
-- Documentation Mojaloop: https://mojaloop.io
-- Guide d'intégration frontend: `FRONTEND_INTEGRATION_GUIDE.md`
+Pour toute question technique concernant le backend :
+- Consulter la documentation Swagger : http://localhost:8000/swagger/
+- Vérifier les logs Docker : `docker logs gateway-web`
+- Consulter la documentation Django REST Framework
