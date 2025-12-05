@@ -147,6 +147,33 @@ export const api = {
         } catch (error) {
             throw new Error(error.response?.data?.error || 'Échec de récupération des organisations');
         }
+    },
+
+    // Bulk Transfers History
+    getBulkTransfersHistory: async (params = {}) => {
+        try {
+            const queryParams = new URLSearchParams();
+            if (params.state) queryParams.append('state', params.state);
+            if (params.start_date) queryParams.append('start_date', params.start_date);
+            if (params.end_date) queryParams.append('end_date', params.end_date);
+            if (params.limit) queryParams.append('limit', params.limit);
+            if (params.offset) queryParams.append('offset', params.offset);
+
+            const url = `${BACKEND_URL}/bulk-transfers/history${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            const response = await axios.get(url);
+            return response.data; // { total, count, results: [...] }
+        } catch (error) {
+            throw new Error(error.response?.data?.error || 'Échec de récupération de l\'historique');
+        }
+    },
+
+    getBulkTransferDetails: async (bulkId) => {
+        try {
+            const response = await axios.get(`${BACKEND_URL}/bulk-transfers/${bulkId}/details`);
+            return response.data; // { bulk_id, state, statistics, individual_transfers: [...] }
+        } catch (error) {
+            throw new Error(error.response?.data?.error || 'Échec de récupération des détails');
+        }
     }
 };
 

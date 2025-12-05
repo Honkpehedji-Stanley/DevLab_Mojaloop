@@ -1,8 +1,9 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
-import Dashboard from './pages/Dashboard';
+import Dashboard from './pages/DashboardNew';
 import CreateUser from './pages/admin/CreateUser';
+import TransferDetails from './pages/TransferDetails';
 import { Layout } from './components/layout/Layout';
 
 const PrivateRoute = ({ children }) => {
@@ -41,6 +42,16 @@ const AppContent = () => {
           <PrivateRoute>
             <Layout onLogout={logout}>
               <CreateUser />
+            </Layout>
+          </PrivateRoute>
+        }
+      />
+      <Route
+        path="/transfers/:bulkId"
+        element={
+          <PrivateRoute>
+            <Layout onLogout={logout}>
+              <TransferDetails />
             </Layout>
           </PrivateRoute>
         }
