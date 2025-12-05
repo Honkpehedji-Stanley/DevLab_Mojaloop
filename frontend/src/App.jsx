@@ -1,50 +1,50 @@
-import { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Login from './pages/Login';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import LoginPage from './pages/LoginPage';
 import Dashboard from './pages/Dashboard';
 import { Layout } from './components/layout/Layout';
 
-function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    return !!localStorage.getItem('user');
-  });
+const PrivateRoute = ({ children }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
 
-  const handleLogin = () => {
-    setIsAuthenticated(true);
-  };
+  if (loading) {
+    return <div>Loading...</div>;
+  }
 
-  const handleLogout = () => {
-    localStorage.removeItem('user');
-    setIsAuthenticated(false);
-  };
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
 
+  return children;
+};
+
+const AppContent = () => {
+  const { logout } = useAuth();
   return (
-    <Router>
-      <Routes>
-        <Route
-          path="/login"
-          element={
-            !isAuthenticated ? (
-              <Login onLogin={handleLogin} />
-            ) : (
-              <Navigate to="/" replace />
-            )
-          }
-        />
-        <Route
-          path="/"
-          element={
-            isAuthenticated ? (
-              <Layout onLogout={handleLogout}>
-                <Dashboard />
-              </Layout>
-            ) : (
-              <Navigate to="/login" replace />
-            )
-          }
-        />
-      </Routes>
-    </Router>
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/"
+        element={
+          <PrivateRoute>
+            <Layout onLogout={logout}>
+              <Dashboard />
+            </Layout>
+          </PrivateRoute>
+        }
+      />
+    </Routes>
+  );
+};
+
+function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <AppContent />
+      </Router>
+    </AuthProvider>
   );
 }
 

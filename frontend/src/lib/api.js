@@ -1,34 +1,105 @@
-import Papa from 'papaparse';
 import axios from 'axios';
 
-const API_URL = 'http://localhost:5000/api/auth';
+const API_URL = 'http://localhost:8000/api/auth';
 const BACKEND_URL = 'http://localhost:8000/api';
 
-// Default payer account - can be configured
-const DEFAULT_PAYER_ACCOUNT = 'PAYER-001';
+// Helper to get token
+const getAccessToken = () => localStorage.getItem('accessToken');
 
-// // Mock data generation for the response
-// const generateMockResponse = (inputData) => {
-//     return inputData.map((row, index) => {
-//         // Simulate some failures
-//         const isSuccess = Math.random() > 0.2;
-//         return {
-//             ...row,
-//             transactionId: `TXN-${Date.now()}-${index}`,
-//             status: isSuccess ? 'SUCCESS' : 'FAILED',
-//             processedAt: new Date().toISOString(),
-//             message: isSuccess ? 'Payment processed successfully' : 'Insufficient funds or invalid account details'
-//         };
-//     });
-// };
+// Axios interceptor to add token to requests
+axios.interceptors.request.use(
+    (config) => {
+        const token = getAccessToken();
+        if (token) {
+            config.headers['Authorization'] = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
 
-const PENSION_API_URL = 'http://localhost:5000/api/pension';
+// Axios interceptor to handle 401 and refresh token
+axios.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+        const originalRequest = error.config;
+        if (error.response?.status === 401 && !originalRequest._retry) {
+            originalRequest._retry = true;
+            try {
+                const refreshToken = localStorage.getItem('refreshToken');
+                if (!refreshToken) throw new Error('No refresh token');
+
+                const response = await axios.post(`${API_URL}/refresh`, { refresh: refreshToken });
+                const { access } = response.data;
+
+                localStorage.setItem('accessToken', access);
+                axios.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+                originalRequest.headers['Authorization'] = `Bearer ${access}`;
+
+                return axios(originalRequest);
+            } catch (refreshError) {
+                // Logout if refresh fails
+                localStorage.removeItem('accessToken');
+                localStorage.removeItem('refreshToken');
+                localStorage.removeItem('user');
+                window.location.href = '/login';
+                return Promise.reject(refreshError);
+            }
+        }
+        return Promise.reject(error);
+    }
+);
 
 export const api = {
-    uploadCSV: async (file, payerAccount = DEFAULT_PAYER_ACCOUNT) => {
+    // Auth
+    login: async (username, password) => {
+        try {
+            const response = await axios.post(`${API_URL}/login`, { username, password });
+            const { access, refresh } = response.data;
+            localStorage.setItem('accessToken', access);
+            localStorage.setItem('refreshToken', refresh);
+
+            // Fetch user details after login if needed, or just store username
+            // For now, we'll store a simple user object
+            const user = { username };
+            localStorage.setItem('user', JSON.stringify(user));
+
+            return { user, access, refresh };
+        } catch (error) {
+            throw new Error(error.response?.data?.detail || 'Login failed');
+        }
+    },
+
+    logout: async () => {
+        try {
+            const refresh = localStorage.getItem('refreshToken');
+            if (refresh) {
+                await axios.post(`${API_URL}/logout`, { refresh });
+            }
+        } catch (error) {
+            console.error('Logout error', error);
+        } finally {
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            localStorage.removeItem('user');
+        }
+    },
+
+    getCurrentUser: async () => {
+        try {
+            const response = await axios.get(`${API_URL}/me`);
+            return response.data;
+        } catch (error) {
+            // Fallback to local storage if endpoint fails or not implemented yet
+            return JSON.parse(localStorage.getItem('user'));
+        }
+    },
+
+    // Bulk Transfers
+    uploadCSV: async (file) => {
         const formData = new FormData();
         formData.append('file', file);
-        formData.append('payer_account', payerAccount);
+        formData.append('callback_url', `${BACKEND_URL}/transfers`); // Default callback
 
         try {
             const response = await axios.post(`${BACKEND_URL}/bulk-transfers`, formData, {
@@ -36,71 +107,24 @@ export const api = {
                     'Content-Type': 'multipart/form-data'
                 }
             });
-            return response.data;
+            return response.data; // { bulkTransferId: "...", state: "PENDING" }
         } catch (error) {
             const message = error.response?.data?.error || error.message || 'Upload failed';
             throw new Error(message);
         }
     },
 
-    validatePensions: async (file) => {
-        const formData = new FormData();
-        formData.append('file', file);
+    getBulkTransferStatus: async (bulkId) => {
         try {
-            const response = await axios.post(`${PENSION_API_URL}/validate`, formData, {
-                headers: {
-                    'Content-Type': 'multipart/form-data'
-                }
-            });
+            const response = await axios.get(`${BACKEND_URL}/bulk-transfers/${bulkId}/status`);
             return response.data;
         } catch (error) {
-            throw new Error(error.response?.data?.message || 'Validation failed');
+            throw new Error(error.response?.data?.error || 'Failed to get status');
         }
     },
 
-    confirmPensions: async (uploadId) => {
-        try {
-            const response = await axios.post(`${PENSION_API_URL}/confirm`, { uploadId });
-            return response.data;
-        } catch (error) {
-            throw new Error(error.response?.data?.message || 'Confirmation failed');
-        }
-    },
-
-    cancelPensions: async (uploadId) => {
-        try {
-            await axios.post(`${PENSION_API_URL}/cancel`, { uploadId });
-        } catch (error) {
-            console.error('Cancellation failed', error);
-        }
-    },
-
-    login: async (email, password) => {
-        try {
-            const response = await axios.post(`${API_URL}/login`, { email, password });
-            if (response.data.accessToken) {
-                localStorage.setItem('user', JSON.stringify(response.data));
-            }
-            return response.data;
-        } catch (error) {
-            throw new Error(error.response?.data?.message || 'Login failed');
-        }
-    },
-
-    register: async (email, password, name) => {
-        try {
-            const response = await axios.post(`${API_URL}/register`, { email, password, name });
-            return response.data;
-        } catch (error) {
-            throw new Error(error.response?.data?.message || 'Registration failed');
-        }
-    },
-
-    logout: () => {
-        localStorage.removeItem('user');
-    },
-
-    getCurrentUser: () => {
-        return JSON.parse(localStorage.getItem('user'));
+    // SSE Helper
+    getBulkTransferStreamUrl: (bulkId) => {
+        return `${BACKEND_URL}/bulk-transfers/${bulkId}/stream`;
     }
 };

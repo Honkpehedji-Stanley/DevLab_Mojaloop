@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { Download, Search, Filter, CheckCircle, XCircle, Loader2, FileText } from 'lucide-react';
+import { useState, useRef } from 'react';
+import { Download, Search, CheckCircle, XCircle, Loader2, FileText, AlertCircle } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
-import { Input } from '../components/ui/Input';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../components/ui/Table';
 import { FileUpload } from '../components/ui/FileUpload';
 import { Pagination } from '../components/ui/Pagination';
@@ -15,120 +14,126 @@ export default function Dashboard() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
-    const [statusFilter, setStatusFilter] = useState('ALL'); // ALL, SUCCESS, FAILED
-    const [lastUpload, setLastUpload] = useState(null);
+    const [statusFilter, setStatusFilter] = useState('ALL');
     const [currentPage, setCurrentPage] = useState(1);
-    const [validationResult, setValidationResult] = useState(null);
-    const [bulkStatus, setBulkStatus] = useState(null);
     const [processingMessage, setProcessingMessage] = useState('');
+    const [progress, setProgress] = useState(0);
 
     const itemsPerPage = 8;
+    const abortControllerRef = useRef(null);
 
-    const handleFileUpload = async (file) => {
+    const handleFileSelect = (selectedFile) => {
+        setFile(selectedFile);
+        setError(null);
+        setData([]);
+        setProgress(0);
+        setProcessingMessage('');
+    };
+
+    const handleUploadAndProcess = async () => {
         if (!file) return;
 
         setIsLoading(true);
         setError(null);
-        setValidationResult(null);
+        setProcessingMessage('Initialisation du transfert...');
+        setProgress(0);
+        setData([]);
 
         try {
-            const result = await api.validatePensions(file);
-            setValidationResult(result);
+            // 1. Upload CSV
+            const { bulkTransferId } = await api.uploadCSV(file);
+            setProcessingMessage('Traitement en cours...');
+
+            // 2. Start SSE Stream
+            await streamProgress(bulkTransferId);
+
         } catch (err) {
             setError(err.message);
-            console.error(err);
-        } finally {
             setIsLoading(false);
+            setProcessingMessage('');
         }
     };
 
-    const handleSubmitFile = async (file) => {
-        if (!file) return;
-
-        setIsLoading(true);
-        setError(null);
-        setBulkStatus(null);
-        setProcessingMessage('Upload du fichier CSV...');
+    const streamProgress = async (bulkId) => {
+        abortControllerRef.current = new AbortController();
 
         try {
-            // Upload CSV and create bulk transfer
-            const result = await api.uploadCSV(file);
+            // Poll the status endpoint every 2 seconds instead of using SSE
+            // since the backend doesn't support text/event-stream
+            const pollInterval = 2000; // 2 seconds
+            let isComplete = false;
 
-            setProcessingMessage(`Transfert créé: ${result.bulkTransferId}. Traitement en cours...`);
-            setBulkStatus(result);
+            while (!isComplete && !abortControllerRef.current.signal.aborted) {
+                try {
+                    const status = await api.getBulkTransferStatus(bulkId);
 
-            // Poll for status updates
-            const finalStatus = await api.pollBulkStatus(
-                result.bulkTransferId,
-                (status) => {
-                    setBulkStatus(status);
-                    const completed = status.individualTransfers?.filter(t => t.status === 'COMPLETED').length || 0;
-                    const total = status.individualTransfers?.length || 0;
-                    setProcessingMessage(`Traitement: ${completed}/${total} transferts complétés...`);
+                    // Update progress
+                    if (status.progress_percent !== undefined) {
+                        setProgress(status.progress_percent);
+                    }
 
-                    // Update table data in real-time
-                    const mappedData = status.individualTransfers.map((transfer) => ({
-                        transactionId: transfer.transferId,
-                        type_id: transfer.payee_party_id_type,
-                        valeur_id: transfer.payee_party_identifier,
-                        nom_complet: transfer.payee_name || '-',
-                        montant: transfer.amount,
-                        devise: transfer.currency,
-                        status: transfer.status === 'COMPLETED' ? 'SUCCESS' : (transfer.status === 'PENDING' ? 'PENDING' : 'FAILED'),
-                        message: transfer.status === 'COMPLETED'
-                            ? 'Transfert complété avec succès'
-                            : (transfer.status === 'PENDING' ? 'En attente de traitement' : 'Transfert échoué'),
-                        completed_at: transfer.completed_at
-                    }));
-                    setData(mappedData);
+                    if (status.completed !== undefined && status.total !== undefined) {
+                        setProcessingMessage(`Traitement: ${status.completed}/${status.total} transactions`);
+                    }
+
+                    // Check if processing is complete
+                    if (status.state === 'COMPLETED' || status.state === 'FAILED' || status.state === 'PARTIALLY_COMPLETED') {
+                        isComplete = true;
+                        setProcessingMessage(status.state === 'COMPLETED' ? 'Traitement terminé !' : 'Traitement terminé avec des erreurs.');
+                        await fetchFinalStatus(bulkId);
+                        setIsLoading(false);
+                        return;
+                    }
+
+                    // Wait before next poll
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+                } catch (pollError) {
+                    console.error('Error polling status:', pollError);
+                    // Continue polling even if one request fails
+                    await new Promise(resolve => setTimeout(resolve, pollInterval));
                 }
-            );
-
-            setProcessingMessage('');
+            }
         } catch (err) {
-            setError(err.message);
-            setProcessingMessage('');
-            console.error(err);
-        } finally {
+            if (err.name === 'AbortError') return;
+            console.error('Polling error:', err);
+            setError('Erreur lors de la récupération du statut. Tentative de récupération du statut final...');
+            await fetchFinalStatus(bulkId);
             setIsLoading(false);
         }
     };
 
-    const handleConfirm = async () => {
-        if (!validationResult) return;
-
-        setIsLoading(true);
-        setError(null);
-
+    const fetchFinalStatus = async (bulkId) => {
         try {
-            const response = await api.confirmPensions(validationResult.uploadId);
-            setData(response);
-            setLastUpload({
-                count: response.length,
-                successCount: response.filter(d => d.status === 'SUCCESS').length,
-                timestamp: new Date()
-            });
-            setValidationResult(null);
-            setCurrentPage(1);
+            const status = await api.getBulkTransferStatus(bulkId);
+            if (status.individualTransfers) {
+                const mappedData = status.individualTransfers.map((transfer) => ({
+                    transactionId: transfer.transferId,
+                    type_id: transfer.payee_party_id_type,
+                    valeur_id: transfer.payee_party_identifier,
+                    nom_complet: transfer.payee_name || '-',
+                    montant: transfer.amount,
+                    devise: transfer.currency,
+                    status: transfer.status === 'COMPLETED' ? 'SUCCESS' : (transfer.status === 'PENDING' ? 'PENDING' : 'FAILED'),
+                    message: transfer.error_message || (transfer.status === 'COMPLETED' ? 'Succès' : 'En attente'),
+                    completed_at: transfer.completed_at
+                }));
+                setData(mappedData);
+            }
         } catch (err) {
-            setError(err.message);
-        } finally {
-            setIsLoading(false);
+            setError('Impossible de récupérer le statut final: ' + err.message);
         }
     };
 
-    const handleCancel = async () => {
-        if (!validationResult) return;
-
-        try {
-            await api.cancelPensions(validationResult.uploadId);
-        } catch (err) {
-            console.error(err);
+    const handleCancel = () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
         }
-        setValidationResult(null);
-        setError(null);
+        setIsLoading(false);
+        setProcessingMessage('Annulé par l\'utilisateur');
     };
 
+    // Filter and Pagination
     const filteredData = data.filter(item => {
         const matchesSearch = Object.values(item).some(val =>
             String(val).toLowerCase().includes(searchTerm.toLowerCase())
@@ -137,22 +142,19 @@ export default function Dashboard() {
         return matchesSearch && matchesFilter;
     });
 
-    // Pagination Logic
     const indexOfLastItem = currentPage * itemsPerPage;
     const indexOfFirstItem = indexOfLastItem - itemsPerPage;
     const currentItems = filteredData.slice(indexOfFirstItem, indexOfLastItem);
 
     const downloadReport = () => {
         if (data.length === 0) return;
-
-        // Simple CSV download logic
         const headers = Object.keys(data[0]).join(',');
         const rows = data.map(row => Object.values(row).join(','));
         const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].join('\n');
         const encodedUri = encodeURI(csvContent);
         const link = document.createElement("a");
         link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `pension_report_${Date.now()}.csv`);
+        link.setAttribute("download", `rapport_pensions_${Date.now()}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -163,7 +165,7 @@ export default function Dashboard() {
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-secondary-900">Tableau de bord</h1>
-                    <p className="text-secondary-500">Gestion des pensions et affichage des rapports de transactions.</p>
+                    <p className="text-secondary-500">Gestion des pensions et suivi en temps réel.</p>
                 </div>
                 {data.length > 0 && (
                     <Button onClick={downloadReport} className="animate-fade-in">
@@ -181,96 +183,48 @@ export default function Dashboard() {
                             <CardTitle>Importer CSV</CardTitle>
                         </CardHeader>
                         <CardContent>
-                            {!validationResult ? (
-                                <>
-                                    <FileUpload
-                                        sendFile={setFile}
-                                        onFileSelect={handleFileUpload}
-                                        isUploading={isLoading}
-                                        error={error}
-                                    />
-                                    {isLoading && (
-                                        <div className="mt-6 flex flex-col items-center justify-center text-center animate-fade-in">
-                                            <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-2" />
-                                            <p className="text-sm font-medium text-secondary-900">Traitement du fichier...</p>
-                                            <p className="text-xs text-secondary-500">Veuillez patienter</p>
-                                        </div>
-                                    )}
-                                </>
-                            ) : (
-                                <div className="animate-fade-in space-y-6">
-                                    <div className="bg-secondary-50 p-4 rounded-lg border border-secondary-100">
-                                        <h3 className="font-medium text-secondary-900 mb-3">Résumé de la validation</h3>
-                                        <div className="space-y-2 text-sm">
-                                            <div className="flex justify-between">
-                                                <span className="text-secondary-500">Total lignes:</span>
-                                                <span className="font-medium">{validationResult.totalRows}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-secondary-500">Lignes valides:</span>
-                                                <span className="font-medium text-primary-600">{validationResult.validCount}</span>
-                                            </div>
-                                            <div className="flex justify-between">
-                                                <span className="text-secondary-500">Lignes invalides:</span>
-                                                <span className="font-medium text-red-600">{validationResult.invalidCount}</span>
-                                            </div>
-                                        </div>
-                                    </div>
+                            <FileUpload
+                                sendFile={setFile}
+                                onFileSelect={handleFileSelect}
+                                isUploading={isLoading}
+                                error={error}
+                            />
 
-                                    {validationResult.invalidCount > 0 && (
-                                        <div className="bg-red-50 p-4 rounded-lg border border-red-100">
-                                            <h4 className="font-medium text-red-800 mb-2 text-sm">Lignes ignorées ({validationResult.invalidCount})</h4>
-                                            <div className="max-h-32 overflow-y-auto text-xs text-red-600 space-y-1">
-                                                {validationResult.invalidRows.map((row, idx) => (
-                                                    <div key={idx}>
-                                                        Ligne {row.rowNumber}: {row.reason}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    <div className="flex flex-col gap-3">
-                                        <Button
-                                            onClick={() => handleSubmitFile(file)}
-                                            disabled={isLoading}
-                                            className="w-full"
-                                        >
-                                            {isLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                                            Poursuivre le transfert
-                                        </Button>
-                                        <Button
-                                            variant="ghost"
-                                            onClick={handleCancel}
-                                            disabled={isLoading}
-                                            className="w-full text-red-600 hover:text-red-700 hover:bg-red-50"
-                                        >
-                                            Annuler
-                                        </Button>
+                            {file && !isLoading && (
+                                <div className="mt-4 animate-fade-in">
+                                    <div className="p-3 bg-secondary-50 rounded-lg border border-secondary-100 mb-4">
+                                        <p className="text-sm font-medium text-secondary-900 truncate">{file.name}</p>
+                                        <p className="text-xs text-secondary-500">{(file.size / 1024).toFixed(2)} KB</p>
                                     </div>
+                                    <Button onClick={handleUploadAndProcess} className="w-full">
+                                        Lancer le traitement
+                                    </Button>
                                 </div>
                             )}
 
-                            {lastUpload && !isLoading && !validationResult && (
-                                <div className="mt-6 p-4 bg-secondary-50 rounded-lg border border-secondary-100 animate-fade-in">
-                                    <h4 className="font-medium text-secondary-900 mb-2 flex items-center">
-                                        <FileText className="w-4 h-4 mr-2 text-secondary-500" />
-                                        Résumé de l'importation
-                                    </h4>
-                                    <div className="space-y-2 text-sm">
-                                        <div className="flex justify-between">
-                                            <span className="text-secondary-500">Paiememts a faire:</span>
-                                            <span className="font-medium">{lastUpload.count}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-secondary-500">Paiements faits:</span>
-                                            <span className="font-medium text-green-600">{lastUpload.successCount}</span>
-                                        </div>
-                                        <div className="flex justify-between">
-                                            <span className="text-secondary-500">Paiements echoués:</span>
-                                            <span className="font-medium text-red-600">{lastUpload.count - lastUpload.successCount}</span>
-                                        </div>
+                            {isLoading && (
+                                <div className="mt-6 space-y-4 animate-fade-in">
+                                    <div className="flex flex-col items-center justify-center text-center">
+                                        <Loader2 className="w-8 h-8 text-primary-600 animate-spin mb-2" />
+                                        <p className="text-sm font-medium text-secondary-900">{processingMessage}</p>
+                                        <p className="text-xs text-secondary-500">{progress.toFixed(1)}%</p>
                                     </div>
+                                    <div className="w-full bg-secondary-100 rounded-full h-2.5">
+                                        <div
+                                            className="bg-primary-600 h-2.5 rounded-full transition-all duration-300"
+                                            style={{ width: `${progress}%` }}
+                                        ></div>
+                                    </div>
+                                    <Button variant="ghost" onClick={handleCancel} className="w-full text-red-600 hover:bg-red-50">
+                                        Annuler
+                                    </Button>
+                                </div>
+                            )}
+
+                            {error && !isLoading && (
+                                <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm flex items-start">
+                                    <AlertCircle className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+                                    <span>{error}</span>
                                 </div>
                             )}
                         </CardContent>
@@ -292,7 +246,7 @@ export default function Dashboard() {
                                         value={searchTerm}
                                         onChange={(e) => {
                                             setSearchTerm(e.target.value);
-                                            setCurrentPage(1); // Reset to first page on search
+                                            setCurrentPage(1);
                                         }}
                                     />
                                 </div>
@@ -301,12 +255,13 @@ export default function Dashboard() {
                                     value={statusFilter}
                                     onChange={(e) => {
                                         setStatusFilter(e.target.value);
-                                        setCurrentPage(1); // Reset to first page on filter
+                                        setCurrentPage(1);
                                     }}
                                 >
                                     <option value="ALL">Tous les statuts</option>
                                     <option value="SUCCESS">Succès</option>
                                     <option value="FAILED">Echouée</option>
+                                    <option value="PENDING">En attente</option>
                                 </select>
                             </div>
                         </CardHeader>
@@ -318,12 +273,9 @@ export default function Dashboard() {
                                             <TableHeader>
                                                 <TableRow>
                                                     <TableHead>Statut</TableHead>
-                                                    <TableHead>ID Transaction</TableHead>
-                                                    <TableHead>Type ID</TableHead>
-                                                    <TableHead>Valeur ID</TableHead>
-                                                    <TableHead>Nom Complet</TableHead>
+                                                    <TableHead>ID</TableHead>
+                                                    <TableHead>Bénéficiaire</TableHead>
                                                     <TableHead>Montant</TableHead>
-                                                    <TableHead>Devise</TableHead>
                                                     <TableHead>Message</TableHead>
                                                 </TableRow>
                                             </TableHeader>
@@ -333,35 +285,29 @@ export default function Dashboard() {
                                                         <TableCell>
                                                             <span className={cn(
                                                                 "inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium",
-                                                                row.status === 'SUCCESS' ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+                                                                row.status === 'SUCCESS' ? "bg-green-100 text-green-800" :
+                                                                    row.status === 'PENDING' ? "bg-yellow-100 text-yellow-800" : "bg-red-100 text-red-800"
                                                             )}>
-                                                                {row.status === 'SUCCESS' ? (
-                                                                    <CheckCircle className="w-3 h-3 mr-1" />
-                                                                ) : (
-                                                                    <XCircle className="w-3 h-3 mr-1" />
-                                                                )}
+                                                                {row.status === 'SUCCESS' ? <CheckCircle className="w-3 h-3 mr-1" /> :
+                                                                    row.status === 'PENDING' ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> :
+                                                                        <XCircle className="w-3 h-3 mr-1" />}
                                                                 {row.status}
                                                             </span>
                                                         </TableCell>
                                                         <TableCell className="font-mono text-xs text-secondary-500">{row.transactionId}</TableCell>
-                                                        <TableCell>{row.type_id}</TableCell>
-                                                        <TableCell>{row.valeur_id}</TableCell>
-                                                        <TableCell className="font-medium">{row.nom_complet}</TableCell>
-                                                        <TableCell>{row.montant}</TableCell>
-                                                        <TableCell>{row.devise}</TableCell>
+                                                        <TableCell>
+                                                            <div className="flex flex-col">
+                                                                <span className="font-medium">{row.nom_complet}</span>
+                                                                <span className="text-xs text-secondary-500">{row.type_id}: {row.valeur_id}</span>
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell>{row.montant} {row.devise}</TableCell>
                                                         <TableCell className="text-secondary-500 max-w-xs truncate" title={row.message}>{row.message}</TableCell>
                                                     </TableRow>
                                                 ))}
                                             </TableBody>
                                         </Table>
-                                        {filteredData.length === 0 && (
-                                            <div className="p-8 text-center text-secondary-500">
-                                                Aucun résultat trouvé correspondant à vos filtres.
-                                            </div>
-                                        )}
                                     </div>
-
-                                    {/* Pagination */}
                                     {filteredData.length > itemsPerPage && (
                                         <div className="p-4 border-t border-secondary-200">
                                             <Pagination
@@ -378,7 +324,7 @@ export default function Dashboard() {
                                     <div className="p-4 bg-secondary-50 rounded-full mb-3">
                                         <FileText className="w-8 h-8" />
                                     </div>
-                                    <p>Importez un fichier CSV pour voir les résultas</p>
+                                    <p>Aucune donnée à afficher</p>
                                 </div>
                             )}
                         </CardContent>
