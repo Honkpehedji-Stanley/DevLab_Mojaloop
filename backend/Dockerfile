@@ -1,15 +1,19 @@
 FROM python:3.11-slim
 
-# Image skeleton for the Django gateway application.
-# Add application code, install requirements and run via Gunicorn in production.
-
 WORKDIR /app
 
-# Copy requirements and install (fill later)
-COPY gateway/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt || true
+# Installer les dépendances système pour psycopg2
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy project (to be populated)
+# Copier et installer les dépendances Python
+COPY gateway/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r /app/requirements.txt
+
+# Copier le projet
 COPY gateway /app/gateway
 
 ENV PYTHONUNBUFFERED=1

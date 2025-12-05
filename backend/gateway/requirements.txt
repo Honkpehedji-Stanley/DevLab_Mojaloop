@@ -6,3 +6,4 @@ celery
 redis
 requests
 gunicorn
+django-cors-headers
