@@ -1,4 +1,4 @@
-# Backend - Plateforme de Paiement des Pensions CNSS
+# Backend - Plateforme de Paiement des Pensions
 
 API REST Django pour la gestion des paiements de pensions via Mojaloop.
 

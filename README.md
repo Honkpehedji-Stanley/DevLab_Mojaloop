@@ -1,10 +1,10 @@
-# Plateforme de Paiement des Pensions CNSS
+# Plateforme de Paiement des Pensions
 
 Système de gestion et de distribution des paiements de pensions en masse via le protocole Mojaloop.
 
 ## Vue d'ensemble
 
-Cette plateforme permet à la Caisse Nationale de Sécurité Sociale (CNSS) du Bénin de gérer efficacement les paiements de pensions aux bénéficiaires via des transferts groupés (bulk transfers) utilisant le protocole Mojaloop.
+Cette plateforme permet de gérer efficacement les paiements de pensions aux bénéficiaires via des transferts groupés (bulk transfers) utilisant le protocole Mojaloop.
 
 ### Fonctionnalités principales
 
