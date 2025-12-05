@@ -185,8 +185,10 @@ def create_bulk_transfers(request):
             return HttpResponseBadRequest(json.dumps({'error': f"transferId(s) already exist: {existing_ids}"}), content_type='application/json')
 
         bulk = BulkTransfer.objects.create(bulk_id=bulk_id, payer_account=payer_account, total_amount=total, currency=currency)
-        for it in individual_objs:
-            IndividualTransfer.objects.create(
+        
+        # Utiliser bulk_create pour de meilleures performances avec les grands CSV
+        individual_transfers = [
+            IndividualTransfer(
                 transfer_id=it['transferId'],
                 bulk=bulk,
                 payee_party_id_type=it['partyIdType'],
@@ -194,6 +196,9 @@ def create_bulk_transfers(request):
                 amount=it['amount'],
                 currency=it['currency'],
             )
+            for it in individual_objs
+        ]
+        IndividualTransfer.objects.bulk_create(individual_transfers, batch_size=500)
 
     # Enqueue orchestration task (Celery) to perform discovery/quotes/execution asynchronously
     try:

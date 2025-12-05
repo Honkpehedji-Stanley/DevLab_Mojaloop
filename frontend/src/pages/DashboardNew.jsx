@@ -243,16 +243,131 @@ export default function Dashboard() {
 
     const downloadReport = () => {
         if (uploadResults.length === 0) return;
-        const headers = Object.keys(uploadResults[0]).join(',');
-        const rows = uploadResults.map(row => Object.values(row).join(','));
-        const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].join('\n');
-        const encodedUri = encodeURI(csvContent);
+
+        // Préparer les métadonnées
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('fr-FR');
+        const heureStr = now.toLocaleTimeString('fr-FR');
+
+        // Calculer les statistiques
+        const totalSuccess = uploadResults.filter(r => r.status === 'SUCCESS').length;
+        const totalFailed = uploadResults.filter(r => r.status === 'FAILED').length;
+        const totalPending = uploadResults.filter(r => r.status === 'PENDING').length;
+        const totalAmount = uploadResults.reduce((sum, r) => sum + (r.montant || 0), 0);
+
+        // Construction du CSV avec en-tête professionnel
+        const csvLines = [];
+        csvLines.push('RAPPORT DE TRANSFERT EN MASSE');
+        csvLines.push('');
+        csvLines.push('Informations générales');
+        csvLines.push(`Date de génération,${dateStr} ${heureStr}`);
+        csvLines.push(`Nombre total de transactions,${uploadResults.length}`);
+        csvLines.push(`Montant total,${formatAmount(totalAmount, uploadResults[0]?.devise || 'XOF')}`);
+        csvLines.push('');
+        csvLines.push('Statistiques');
+        csvLines.push(`Transactions réussies,${totalSuccess}`);
+        csvLines.push(`Transactions échouées,${totalFailed}`);
+        csvLines.push(`Transactions en attente,${totalPending}`);
+        csvLines.push(`Taux de succès,${uploadResults.length > 0 ? ((totalSuccess / uploadResults.length) * 100).toFixed(2) : 0}%`);
+        csvLines.push('');
+        csvLines.push('Détail des transactions');
+        csvLines.push('ID Transaction,Type Identifiant,Numéro/Identifiant,Nom Bénéficiaire,Montant,Devise,Statut,Message,Date Complétion');
+
+        // Ajouter les transactions
+        uploadResults.forEach(row => {
+            const line = [
+                row.transactionId || '',
+                row.type_id || '',
+                row.valeur_id || '',
+                row.nom_complet || '-',
+                (row.montant / 100).toFixed(2),
+                row.devise || 'XOF',
+                row.status === 'SUCCESS' ? 'Réussi' : (row.status === 'FAILED' ? 'Échoué' : 'En attente'),
+                row.message || '',
+                row.completed_at ? formatDate(row.completed_at) : '-'
+            ].map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+            csvLines.push(line);
+        });
+
+        // Créer et télécharger le fichier
+        const csvContent = csvLines.join('\n');
+        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
         const link = document.createElement("a");
-        link.setAttribute("href", encodedUri);
-        link.setAttribute("download", `rapport_pensions_${Date.now()}.csv`);
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `rapport_transfert_${now.getTime()}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const downloadBulkDetailReport = () => {
+        if (!selectedBulk) return;
+
+        const now = new Date();
+        const dateStr = now.toLocaleDateString('fr-FR');
+        const heureStr = now.toLocaleTimeString('fr-FR');
+
+        // Construction du CSV détaillé
+        const csvLines = [];
+        csvLines.push('RAPPORT DÉTAILLÉ - TRANSFERT EN MASSE');
+        csvLines.push('');
+        csvLines.push('Informations du transfert');
+        csvLines.push(`ID Bulk,${selectedBulk.bulk_id}`);
+        csvLines.push(`Organisation,${selectedBulk.organization?.name || '-'}`);
+        csvLines.push(`Code Organisation,${selectedBulk.organization?.code || '-'}`);
+        csvLines.push(`Compte Payeur,${selectedBulk.payer_account?.account_id || '-'}`);
+        csvLines.push(`Identifiant Payeur,${selectedBulk.payer_account?.party_identifier || '-'}`);
+        csvLines.push(`Montant Total,${formatAmount(selectedBulk.total_amount, selectedBulk.currency)}`);
+        csvLines.push(`Devise,${selectedBulk.currency}`);
+        csvLines.push(`Statut,${getStateLabel(selectedBulk.state)}`);
+        csvLines.push(`Date de Création,${formatDate(selectedBulk.created_at)}`);
+        csvLines.push(`Date de Génération du Rapport,${dateStr} ${heureStr}`);
+        csvLines.push('');
+
+        if (selectedBulk.statistics) {
+            csvLines.push('Statistiques');
+            csvLines.push(`Total Transactions,${selectedBulk.statistics.total}`);
+            csvLines.push(`Transactions Complétées,${selectedBulk.statistics.completed}`);
+            csvLines.push(`Transactions Échouées,${selectedBulk.statistics.failed}`);
+            csvLines.push(`Transactions En Attente,${selectedBulk.statistics.pending}`);
+            csvLines.push(`Transactions En Cours,${selectedBulk.statistics.processing || 0}`);
+            csvLines.push(`Taux de Succès,${selectedBulk.statistics.success_rate}%`);
+            csvLines.push('');
+        }
+
+        csvLines.push('Détail des Transactions Individuelles');
+        csvLines.push('ID Transaction,Type Identifiant,Numéro/Identifiant,Montant,Devise,Statut,Date Complétion,Code Erreur,Description Erreur');
+
+        if (selectedBulk.individual_transfers && selectedBulk.individual_transfers.length > 0) {
+            selectedBulk.individual_transfers.forEach(transfer => {
+                const line = [
+                    transfer.transfer_id || '',
+                    transfer.payee_party_id_type || '',
+                    transfer.payee_party_identifier || '',
+                    (transfer.amount / 100).toFixed(2),
+                    transfer.currency || 'XOF',
+                    transfer.status === 'COMPLETED' ? 'Complété' : (transfer.status === 'FAILED' ? 'Échoué' : (transfer.status === 'PROCESSING' ? 'En cours' : 'En attente')),
+                    transfer.completed_at ? formatDate(transfer.completed_at) : '-',
+                    transfer.error_code || '-',
+                    transfer.error_description || '-'
+                ].map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',');
+                csvLines.push(line);
+            });
+        }
+
+        // Créer et télécharger le fichier
+        const csvContent = csvLines.join('\n');
+        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `rapport_bulk_${selectedBulk.bulk_id}_${now.getTime()}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     // Filter upload results
@@ -683,10 +798,10 @@ export default function Dashboard() {
 
             {/* Modal pour les détails du bulk transfer */}
             {showDetailsModal && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+                    <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full my-8 flex flex-col max-h-[calc(100vh-4rem)]">
                         {/* Header du modal */}
-                        <div className="flex items-center justify-between p-6 border-b border-secondary-200">
+                        <div className="flex items-center justify-between p-6 border-b border-secondary-200 flex-shrink-0">
                             <div>
                                 <h2 className="text-xl font-semibold text-secondary-900">
                                     Détails du transfert
@@ -706,135 +821,142 @@ export default function Dashboard() {
                         </div>
 
                         {/* Contenu du modal */}
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-140px)]">
-                            {loadingDetails ? (
-                                <div className="flex items-center justify-center py-12">
-                                    <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
-                                    <span className="ml-3 text-secondary-600">Chargement des détails...</span>
+                        <div className="p-6 overflow-y-auto flex-1">{loadingDetails ? (
+                            <div className="flex items-center justify-center py-12">
+                                <Loader2 className="w-8 h-8 animate-spin text-primary-600" />
+                                <span className="ml-3 text-secondary-600">Chargement des détails...</span>
+                            </div>
+                        ) : selectedBulk ? (
+                            <>
+                                {/* Informations générales */}
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                                    <div className="bg-secondary-50 p-4 rounded-lg">
+                                        <div className="text-xs text-secondary-600 mb-1">Montant total</div>
+                                        <div className="text-lg font-semibold text-secondary-900">
+                                            {formatAmount(selectedBulk.total_amount, selectedBulk.currency)}
+                                        </div>
+                                    </div>
+                                    <div className="bg-secondary-50 p-4 rounded-lg">
+                                        <div className="text-xs text-secondary-600 mb-1">État</div>
+                                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStateColor(selectedBulk.state)}`}>
+                                            {getStateLabel(selectedBulk.state)}
+                                        </span>
+                                    </div>
+                                    <div className="bg-secondary-50 p-4 rounded-lg">
+                                        <div className="text-xs text-secondary-600 mb-1">Organisation</div>
+                                        <div className="text-sm font-medium text-secondary-900">
+                                            {selectedBulk.organization?.name || '-'}
+                                        </div>
+                                    </div>
+                                    <div className="bg-secondary-50 p-4 rounded-lg">
+                                        <div className="text-xs text-secondary-600 mb-1">Date de création</div>
+                                        <div className="text-sm font-medium text-secondary-900">
+                                            {formatDate(selectedBulk.created_at)}
+                                        </div>
+                                    </div>
                                 </div>
-                            ) : selectedBulk ? (
-                                <>
-                                    {/* Informations générales */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                                        <div className="bg-secondary-50 p-4 rounded-lg">
-                                            <div className="text-xs text-secondary-600 mb-1">Montant total</div>
-                                            <div className="text-lg font-semibold text-secondary-900">
-                                                {formatAmount(selectedBulk.total_amount, selectedBulk.currency)}
+
+                                {/* Statistiques */}
+                                {selectedBulk.statistics && (
+                                    <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-4 rounded-lg mb-6">
+                                        <h3 className="text-sm font-semibold text-secondary-900 mb-3">Statistiques</h3>
+                                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                            <div>
+                                                <div className="text-xs text-secondary-600">Total</div>
+                                                <div className="text-xl font-bold text-secondary-900">{selectedBulk.statistics.total}</div>
                                             </div>
-                                        </div>
-                                        <div className="bg-secondary-50 p-4 rounded-lg">
-                                            <div className="text-xs text-secondary-600 mb-1">État</div>
-                                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStateColor(selectedBulk.state)}`}>
-                                                {getStateLabel(selectedBulk.state)}
-                                            </span>
-                                        </div>
-                                        <div className="bg-secondary-50 p-4 rounded-lg">
-                                            <div className="text-xs text-secondary-600 mb-1">Organisation</div>
-                                            <div className="text-sm font-medium text-secondary-900">
-                                                {selectedBulk.organization?.name || '-'}
+                                            <div>
+                                                <div className="text-xs text-green-600">Complétés</div>
+                                                <div className="text-xl font-bold text-green-700">{selectedBulk.statistics.completed}</div>
                                             </div>
-                                        </div>
-                                        <div className="bg-secondary-50 p-4 rounded-lg">
-                                            <div className="text-xs text-secondary-600 mb-1">Date de création</div>
-                                            <div className="text-sm font-medium text-secondary-900">
-                                                {formatDate(selectedBulk.created_at)}
+                                            <div>
+                                                <div className="text-xs text-red-600">Échoués</div>
+                                                <div className="text-xl font-bold text-red-700">{selectedBulk.statistics.failed}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-yellow-600">En attente</div>
+                                                <div className="text-xl font-bold text-yellow-700">{selectedBulk.statistics.pending}</div>
+                                            </div>
+                                            <div>
+                                                <div className="text-xs text-secondary-600">Taux de succès</div>
+                                                <div className="text-xl font-bold text-primary-600">{selectedBulk.statistics.success_rate}%</div>
                                             </div>
                                         </div>
                                     </div>
+                                )}
 
-                                    {/* Statistiques */}
-                                    {selectedBulk.statistics && (
-                                        <div className="bg-gradient-to-r from-primary-50 to-secondary-50 p-4 rounded-lg mb-6">
-                                            <h3 className="text-sm font-semibold text-secondary-900 mb-3">Statistiques</h3>
-                                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                                                <div>
-                                                    <div className="text-xs text-secondary-600">Total</div>
-                                                    <div className="text-xl font-bold text-secondary-900">{selectedBulk.statistics.total}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs text-green-600">Complétés</div>
-                                                    <div className="text-xl font-bold text-green-700">{selectedBulk.statistics.completed}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs text-red-600">Échoués</div>
-                                                    <div className="text-xl font-bold text-red-700">{selectedBulk.statistics.failed}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs text-yellow-600">En attente</div>
-                                                    <div className="text-xl font-bold text-yellow-700">{selectedBulk.statistics.pending}</div>
-                                                </div>
-                                                <div>
-                                                    <div className="text-xs text-secondary-600">Taux de succès</div>
-                                                    <div className="text-xl font-bold text-primary-600">{selectedBulk.statistics.success_rate}%</div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Liste des transactions individuelles */}
-                                    <div>
-                                        <h3 className="text-sm font-semibold text-secondary-900 mb-3">
-                                            Transactions individuelles ({selectedBulk.individual_transfers?.length || 0})
-                                        </h3>
-                                        <div className="border border-secondary-200 rounded-lg overflow-hidden">
-                                            <div className="overflow-x-auto">
-                                                <table className="w-full">
-                                                    <thead className="bg-secondary-50">
-                                                        <tr>
-                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">ID Transaction</th>
-                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Bénéficiaire</th>
-                                                            <th className="px-4 py-3 text-right text-xs font-medium text-secondary-600">Montant</th>
-                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">État</th>
-                                                            <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Date</th>
+                                {/* Liste des transactions individuelles */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-secondary-900 mb-3">
+                                        Transactions individuelles ({selectedBulk.individual_transfers?.length || 0})
+                                    </h3>
+                                    <div className="border border-secondary-200 rounded-lg overflow-hidden">
+                                        <div className="overflow-x-auto">
+                                            <table className="w-full">
+                                                <thead className="bg-secondary-50">
+                                                    <tr>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">ID Transaction</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Bénéficiaire</th>
+                                                        <th className="px-4 py-3 text-right text-xs font-medium text-secondary-600">Montant</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">État</th>
+                                                        <th className="px-4 py-3 text-left text-xs font-medium text-secondary-600">Date</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-secondary-200">
+                                                    {selectedBulk.individual_transfers?.map((transfer, index) => (
+                                                        <tr key={transfer.transfer_id || index} className="hover:bg-secondary-50">
+                                                            <td className="px-4 py-3 text-sm font-mono text-secondary-700">
+                                                                {transfer.transfer_id}
+                                                            </td>
+                                                            <td className="px-4 py-3 text-sm text-secondary-900">
+                                                                <div>
+                                                                    <div className="font-medium">{transfer.payee_party_identifier}</div>
+                                                                    <div className="text-xs text-secondary-500">{transfer.payee_party_id_type}</div>
+                                                                </div>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-sm text-right font-medium text-secondary-900">
+                                                                {formatAmount(transfer.amount, transfer.currency)}
+                                                            </td>
+                                                            <td className="px-4 py-3">
+                                                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${transfer.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
+                                                                    transfer.status === 'FAILED' ? 'bg-red-100 text-red-800' :
+                                                                        transfer.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
+                                                                            'bg-yellow-100 text-yellow-800'
+                                                                    }`}>
+                                                                    {transfer.status === 'COMPLETED' ? 'Complété' :
+                                                                        transfer.status === 'FAILED' ? 'Échoué' :
+                                                                            transfer.status === 'PROCESSING' ? 'En cours' : 'En attente'}
+                                                                </span>
+                                                            </td>
+                                                            <td className="px-4 py-3 text-sm text-secondary-600">
+                                                                {formatDate(transfer.completed_at)}
+                                                            </td>
                                                         </tr>
-                                                    </thead>
-                                                    <tbody className="divide-y divide-secondary-200">
-                                                        {selectedBulk.individual_transfers?.map((transfer, index) => (
-                                                            <tr key={transfer.transfer_id || index} className="hover:bg-secondary-50">
-                                                                <td className="px-4 py-3 text-sm font-mono text-secondary-700">
-                                                                    {transfer.transfer_id}
-                                                                </td>
-                                                                <td className="px-4 py-3 text-sm text-secondary-900">
-                                                                    <div>
-                                                                        <div className="font-medium">{transfer.payee_party_identifier}</div>
-                                                                        <div className="text-xs text-secondary-500">{transfer.payee_party_id_type}</div>
-                                                                    </div>
-                                                                </td>
-                                                                <td className="px-4 py-3 text-sm text-right font-medium text-secondary-900">
-                                                                    {formatAmount(transfer.amount, transfer.currency)}
-                                                                </td>
-                                                                <td className="px-4 py-3">
-                                                                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${transfer.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                                                                            transfer.status === 'FAILED' ? 'bg-red-100 text-red-800' :
-                                                                                transfer.status === 'PROCESSING' ? 'bg-blue-100 text-blue-800' :
-                                                                                    'bg-yellow-100 text-yellow-800'
-                                                                        }`}>
-                                                                        {transfer.status === 'COMPLETED' ? 'Complété' :
-                                                                            transfer.status === 'FAILED' ? 'Échoué' :
-                                                                                transfer.status === 'PROCESSING' ? 'En cours' : 'En attente'}
-                                                                    </span>
-                                                                </td>
-                                                                <td className="px-4 py-3 text-sm text-secondary-600">
-                                                                    {formatDate(transfer.completed_at)}
-                                                                </td>
-                                                            </tr>
-                                                        ))}
-                                                    </tbody>
-                                                </table>
-                                            </div>
+                                                    ))}
+                                                </tbody>
+                                            </table>
                                         </div>
                                     </div>
-                                </>
-                            ) : (
-                                <div className="flex flex-col items-center justify-center py-12">
-                                    <AlertCircle className="w-12 h-12 text-red-500 mb-3" />
-                                    <p className="text-secondary-600">Erreur lors du chargement des détails</p>
                                 </div>
-                            )}
+                            </>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-12">
+                                <AlertCircle className="w-12 h-12 text-red-500 mb-3" />
+                                <p className="text-secondary-600">Erreur lors du chargement des détails</p>
+                            </div>
+                        )}
                         </div>
 
                         {/* Footer du modal */}
-                        <div className="flex items-center justify-end gap-3 p-6 border-t border-secondary-200 bg-secondary-50">
+                        <div className="flex items-center justify-between gap-3 p-6 border-t border-secondary-200 bg-secondary-50 flex-shrink-0">
+                            <Button
+                                variant="primary"
+                                onClick={downloadBulkDetailReport}
+                                className="flex items-center gap-2"
+                            >
+                                <Download className="w-4 h-4" />
+                                Télécharger le rapport
+                            </Button>
                             <Button
                                 variant="secondary"
                                 onClick={closeDetailsModal}
